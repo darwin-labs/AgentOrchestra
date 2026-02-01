@@ -1,0 +1,8 @@
+[llm]
+api_type = "groq"
+model = "moonshotai/kimi-k2-instruct-0905"
+base_url = ""
+api_key = "env"
+max_tokens = 8192
+temperature = 0.0
+api_version = ""

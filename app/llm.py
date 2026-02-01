@@ -177,10 +177,23 @@ class LLM:
     def __new__(
         cls, config_name: str = "default", llm_config: Optional[LLMSettings] = None
     ):
-        if config_name not in cls._instances:
+        # If custom settings are provided or we are in a request context,
+        # bypass singleton to ensure fresh configuration is applied.
+        force_new = llm_config is not None
+        if not force_new:
+            try:
+                from app.config import config
+
+                force_new = config._config_context.get() is not None
+            except (ImportError, AttributeError):
+                pass
+
+        if force_new or config_name not in cls._instances:
             instance = super().__new__(cls)
             instance.__init__(config_name, llm_config)
-            cls._instances[config_name] = instance
+            if not force_new:
+                cls._instances[config_name] = instance
+            return instance
         return cls._instances[config_name]
 
     def __init__(
@@ -201,7 +214,7 @@ class LLM:
             resolved_base_url = self.base_url
 
             if self.api_type == "groq":
-                resolved_api_key = os.environ.get("GROQ_API_KEY") or self.api_key
+                resolved_api_key = self.api_key or os.environ.get("GROQ_API_KEY")
                 if not resolved_base_url:
                     resolved_base_url = "https://api.groq.com/openai/v1"
 

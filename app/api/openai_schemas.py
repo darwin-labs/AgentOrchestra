@@ -43,6 +43,10 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
 
+    # Custom fields for dynamic configuration
+    groq_api_key: Optional[str] = None
+    daytona_api_key: Optional[str] = None
+
 
 class ChatCompletionChoiceMessage(BaseModel):
     role: Literal["assistant"] = "assistant"

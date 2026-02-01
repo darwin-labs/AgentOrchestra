@@ -7,14 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.agent.manus import Manus
-from app.config import config
 from app.api.auth import require_openai_auth
 from app.api.openai_schemas import (
+    ChatCompletionChoice,
+    ChatCompletionChoiceMessage,
     ChatCompletionChunkChoice,
     ChatCompletionChunkDelta,
     ChatCompletionChunkResponse,
-    ChatCompletionChoice,
-    ChatCompletionChoiceMessage,
     ChatCompletionRequest,
     ChatCompletionResponse,
     ChatCompletionUsage,
@@ -23,6 +22,7 @@ from app.api.openai_schemas import (
     OpenAIErrorPayload,
     OpenAIErrorResponse,
 )
+from app.config import config
 
 router = APIRouter(prefix="/v1")
 
@@ -35,8 +35,12 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
 
 
-def _error_response(message: str, status_code: int, error_type: str = "invalid_request_error") -> JSONResponse:
-    payload = OpenAIErrorResponse(error=OpenAIErrorPayload(message=message, type=error_type))
+def _error_response(
+    message: str, status_code: int, error_type: str = "invalid_request_error"
+) -> JSONResponse:
+    payload = OpenAIErrorResponse(
+        error=OpenAIErrorPayload(message=message, type=error_type)
+    )
     return JSONResponse(status_code=status_code, content=payload.model_dump())
 
 
@@ -48,7 +52,11 @@ def _extract_best_output(agent: Manus, fallback: str) -> str:
         role = str(msg.role)
         if role == "assistant" and msg.content:
             assistant_contents.append(str(msg.content))
-        if role == "tool" and getattr(msg, "name", None) == "create_chat_completion" and msg.content:
+        if (
+            role == "tool"
+            and getattr(msg, "name", None) == "create_chat_completion"
+            and msg.content
+        ):
             tool_contents.append(str(msg.content))
 
     if assistant_contents:
@@ -89,7 +97,9 @@ async def list_models() -> ModelListResponse:
     model_ids = {settings.model for settings in config.llm.values() if settings.model}
     if not model_ids:
         model_ids = {"openmanus"}
-    models = [ModelObject(id=model_id, created=created) for model_id in sorted(model_ids)]
+    models = [
+        ModelObject(id=model_id, created=created) for model_id in sorted(model_ids)
+    ]
     return ModelListResponse(data=models)
 
 
@@ -106,12 +116,43 @@ async def chat_completions(req: ChatCompletionRequest):
     created = _now()
     completion_id = _new_id("chatcmpl")
 
-    agent = await Manus.create()
+    # Handle dynamic configuration overrides
+    token = None
+    if req.groq_api_key or req.daytona_api_key or req.model:
+        new_config = config.current_config.model_copy()
+
+        if req.groq_api_key:
+            new_llm = new_config.llm.copy()
+            for name, settings in new_llm.items():
+                if settings.api_type == "groq":
+                    new_llm[name] = settings.model_copy(
+                        update={"api_key": req.groq_api_key}
+                    )
+            new_config.llm = new_llm
+
+        if req.model:
+            new_llm = new_config.llm.copy()
+            # Also update 'default' to use the requested model
+            if "default" in new_llm:
+                new_llm["default"] = new_llm["default"].model_copy(
+                    update={"model": req.model}
+                )
+            new_config.llm = new_llm
+
+        if req.daytona_api_key and new_config.daytona_config:
+            new_config.daytona_config = new_config.daytona_config.model_copy(
+                update={"daytona_api_key": req.daytona_api_key}
+            )
+
+        token = config.set_context_config(new_config)
+
     try:
+        agent = await Manus.create()
         result = await agent.run(prompt)
         content = _extract_best_output(agent, fallback=result)
 
         if req.stream:
+
             async def event_stream() -> AsyncIterator[bytes]:
                 chunk1 = ChatCompletionChunkResponse(
                     id=completion_id,
@@ -158,7 +199,9 @@ async def chat_completions(req: ChatCompletionRequest):
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-        usage = ChatCompletionUsage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+        usage = ChatCompletionUsage(
+            prompt_tokens=0, completion_tokens=0, total_tokens=0
+        )
         resp = ChatCompletionResponse(
             id=completion_id,
             created=created,
@@ -175,3 +218,6 @@ async def chat_completions(req: ChatCompletionRequest):
         return resp
     except Exception as e:
         return _error_response(str(e), status_code=500, error_type="server_error")
+    finally:
+        if token:
+            config.reset_context_config(token)

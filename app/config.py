@@ -1,12 +1,15 @@
 import json
 import os
 import threading
+
 try:
     import tomllib
 except ModuleNotFoundError:
     import tomli as tomllib
+
+import contextvars
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -202,6 +205,9 @@ class Config:
     _instance = None
     _lock = threading.Lock()
     _initialized = False
+    _config_context: contextvars.ContextVar[Optional[AppConfig]] = (
+        contextvars.ContextVar("config_context", default=None)
+    )
 
     def __new__(cls):
         if cls._instance is None:
@@ -342,35 +348,49 @@ class Config:
 
         self._config = AppConfig(**config_dict)
 
+    def set_context_config(self, config_obj: AppConfig) -> contextvars.Token:
+        """Set a request-specific configuration context."""
+        return self._config_context.set(config_obj)
+
+    def reset_context_config(self, token: contextvars.Token) -> None:
+        """Reset the configuration context."""
+        self._config_context.reset(token)
+
+    @property
+    def current_config(self) -> AppConfig:
+        """Get the current applicable configuration (context-aware)."""
+        ctx_config = self._config_context.get()
+        return ctx_config if ctx_config is not None else self._config
+
     @property
     def llm(self) -> Dict[str, LLMSettings]:
-        return self._config.llm
+        return self.current_config.llm
 
     @property
     def sandbox(self) -> SandboxSettings:
-        return self._config.sandbox
+        return self.current_config.sandbox
 
     @property
     def daytona(self) -> DaytonaSettings:
-        return self._config.daytona_config
+        return self.current_config.daytona_config
 
     @property
     def browser_config(self) -> Optional[BrowserSettings]:
-        return self._config.browser_config
+        return self.current_config.browser_config
 
     @property
     def search_config(self) -> Optional[SearchSettings]:
-        return self._config.search_config
+        return self.current_config.search_config
 
     @property
     def mcp_config(self) -> MCPSettings:
         """Get the MCP configuration"""
-        return self._config.mcp_config
+        return self.current_config.mcp_config
 
     @property
     def run_flow_config(self) -> RunflowSettings:
         """Get the Run Flow configuration"""
-        return self._config.run_flow_config
+        return self.current_config.run_flow_config
 
     @property
     def workspace_root(self) -> Path:
