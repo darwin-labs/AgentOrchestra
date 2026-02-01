@@ -31,7 +31,6 @@ from app.schema import (
     ToolChoice,
 )
 
-
 REASONING_MODELS = ["o1", "o3-mini"]
 MULTIMODAL_MODELS = [
     "gpt-4-vision-preview",
@@ -231,9 +230,21 @@ class LLM:
             elif self.api_type == "aws":
                 self.client = BedrockClient()
             elif self.api_type == "groq":
-                self.client = AsyncOpenAI(api_key=resolved_api_key, base_url=resolved_base_url)
+                # Import Groq client locally to avoid top-level dependency if not installed
+                from groq import AsyncGroq
+
+                self.client = AsyncGroq(
+                    api_key=resolved_api_key,
+                    base_url=(
+                        "https://api.groq.com"
+                        if not resolved_base_url
+                        else resolved_base_url
+                    ),
+                )
             else:
-                self.client = AsyncOpenAI(api_key=resolved_api_key, base_url=resolved_base_url)
+                self.client = AsyncOpenAI(
+                    api_key=resolved_api_key, base_url=resolved_base_url
+                )
 
             self.token_counter = TokenCounter(self.tokenizer)
 
@@ -548,9 +559,7 @@ class LLM:
             multimodal_content = (
                 [{"type": "text", "text": content}]
                 if isinstance(content, str)
-                else content
-                if isinstance(content, list)
-                else []
+                else content if isinstance(content, list) else []
             )
 
             # Add images to content

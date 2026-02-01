@@ -1,6 +1,10 @@
 import json
+import os
 import threading
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -106,7 +110,7 @@ class SandboxSettings(BaseModel):
 
 
 class DaytonaSettings(BaseModel):
-    daytona_api_key: str
+    daytona_api_key: Optional[str] = None
     daytona_server_url: Optional[str] = Field(
         "https://app.daytona.io/api", description=""
     )
@@ -217,6 +221,16 @@ class Config:
     @staticmethod
     def _get_config_path() -> Path:
         root = PROJECT_ROOT
+        env_config_path = os.environ.get("AGENT_ORCHESTRA_CONFIG_PATH")
+        if env_config_path:
+            candidate = Path(env_config_path)
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            if candidate.exists():
+                return candidate
+            raise FileNotFoundError(
+                f"Config file not found at AGENT_ORCHESTRA_CONFIG_PATH={candidate}"
+            )
         config_path = root / "config" / "config.toml"
         if config_path.exists():
             return config_path
