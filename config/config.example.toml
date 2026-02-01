@@ -2,7 +2,7 @@
 [llm]
 api_type = "groq"                                 # Using Groq API
 model = "moonshotai/kimi-k2-instruct-0905"        # The LLM model to use
-base_url = "https://api.groq.com"                 # API endpoint URL
+base_url = "https://api.groq.com/openai/v1"                 # API endpoint URL
 api_key = ""                                      # Set via GROQ_API_KEY env var
 max_tokens = 8192                                 # Maximum number of tokens in the response
 temperature = 0.0                                 # Controls randomness
@@ -44,7 +44,7 @@ temperature = 0.0                                 # Controls randomness
 [llm.vision]
 api_type = "groq"                                 # Using Groq API
 model = "moonshotai/kimi-k2-instruct-0905"        # The vision model to use
-base_url = "https://api.groq.com"                 # API endpoint URL for vision model
+base_url = "https://api.groq.com/openai/v1"                 # API endpoint URL for vision model
 api_key = ""                                      # Set via GROQ_API_KEY env var
 max_tokens = 8192                                 # Maximum number of tokens in the response
 temperature = 0.0                                 # Controls randomness for vision model
