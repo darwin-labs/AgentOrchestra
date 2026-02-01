@@ -214,7 +214,9 @@ class LLM:
             resolved_base_url = self.base_url
 
             if self.api_type == "groq":
-                resolved_api_key = self.api_key or os.environ.get("GROQ_API_KEY")
+                # If api_key is "env" or empty, use the environment variable
+                if not self.api_key or self.api_key == "env":
+                    resolved_api_key = os.environ.get("GROQ_API_KEY")
                 if not resolved_base_url:
                     resolved_base_url = "https://api.groq.com/openai/v1"
 
