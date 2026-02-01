@@ -248,13 +248,14 @@ class LLM:
                 # Import Groq client locally to avoid top-level dependency if not installed
                 from groq import AsyncGroq
 
+                # AsyncGroq client automatically appends /openai/v1 if not present,
+                # or if we provide a base_url, it might be appending it again.
+                # To be safe, let's use the root URL
+                resolved_base_url = "https://api.groq.com"
+
                 self.client = AsyncGroq(
                     api_key=resolved_api_key,
-                    base_url=(
-                        "https://api.groq.com"
-                        if not resolved_base_url
-                        else resolved_base_url
-                    ),
+                    base_url=resolved_base_url,
                 )
             else:
                 self.client = AsyncOpenAI(
@@ -262,6 +263,16 @@ class LLM:
                 )
 
             self.token_counter = TokenCounter(self.tokenizer)
+
+            # Debug logging
+            masked_key = (
+                f"{resolved_api_key[:8]}..."
+                if resolved_api_key and len(resolved_api_key) > 8
+                else "None"
+            )
+            logger.info(
+                f"LLM Initialized: type={self.api_type}, model={self.model}, base_url={resolved_base_url}, key={masked_key}"
+            )
 
     def count_tokens(self, text: str) -> int:
         """Calculate the number of tokens in a text"""
