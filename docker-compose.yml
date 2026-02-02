@@ -1,0 +1,25 @@
+services:
+  agent-orchestra:
+    build: .
+    image: agent-orchestra:latest
+    container_name: agent-orchestra
+    ports:
+      - "8000:8000"
+    environment:
+      # API Keys
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENMANUS_API_KEY=${OPENMANUS_API_KEY}
+      - DAYTONA_API_KEY=${DAYTONA_API_KEY}
+
+      # Server Config
+      - OPENMANUS_API_HOST=0.0.0.0
+      - OPENMANUS_API_PORT=8000
+
+      # Path to config (optional)
+      # - AGENT_ORCHESTRA_CONFIG_PATH=/app/OpenManus/config/config.toml
+    volumes:
+      # Persist agent data and downloaded files
+      - ./workspace:/app/OpenManus/workspace
+      # Optional: Mount your own config
+      # - ./config:/app/OpenManus/config
+    restart: unless-stopped
