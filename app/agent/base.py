@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -152,6 +152,45 @@ class BaseAgent(BaseModel, ABC):
                 results.append(f"Terminated: Reached max steps ({self.max_steps})")
         await SANDBOX_CLIENT.cleanup()
         return "\n".join(results) if results else "No steps executed"
+
+    async def run_stream(self, request: Optional[str] = None) -> AsyncIterator[str]:
+        """Execute the agent's main loop, yielding step results as they occur.
+
+        Args:
+            request: Optional initial user request to process.
+
+        Yields:
+            Step results as they complete.
+
+        Raises:
+            RuntimeError: If the agent is not in IDLE state at start.
+        """
+        if self.state != AgentState.IDLE:
+            raise RuntimeError(f"Cannot run agent from state: {self.state}")
+
+        if request:
+            self.update_memory("user", request)
+
+        async with self.state_context(AgentState.RUNNING):
+            while (
+                self.current_step < self.max_steps and self.state != AgentState.FINISHED
+            ):
+                self.current_step += 1
+                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
+                step_result = await self.step()
+
+                # Check for stuck state
+                if self.is_stuck():
+                    self.handle_stuck_state()
+
+                yield f"Step {self.current_step}: {step_result}"
+
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.state = AgentState.IDLE
+                yield f"Terminated: Reached max steps ({self.max_steps})"
+
+        await SANDBOX_CLIENT.cleanup()
 
     @abstractmethod
     async def step(self) -> str:

@@ -147,13 +147,13 @@ async def chat_completions(req: ChatCompletionRequest):
         token = config.set_context_config(new_config)
 
     try:
-        agent = await Manus.create()
-        result = await agent.run(prompt)
-        content = _extract_best_output(agent, fallback=result)
-
         if req.stream:
-
+            # True streaming: yield chunks as each step completes
             async def event_stream() -> AsyncIterator[bytes]:
+                agent = await Manus.create()
+                accumulated_content = ""
+
+                # Send initial role chunk
                 chunk1 = ChatCompletionChunkResponse(
                     id=completion_id,
                     created=created,
@@ -168,21 +168,56 @@ async def chat_completions(req: ChatCompletionRequest):
                 )
                 yield f"data: {json.dumps(chunk1.model_dump())}\n\n".encode("utf-8")
 
-                chunk2 = ChatCompletionChunkResponse(
-                    id=completion_id,
-                    created=created,
-                    model=req.model,
-                    choices=[
-                        ChatCompletionChunkChoice(
-                            index=0,
-                            delta=ChatCompletionChunkDelta(content=content),
-                            finish_reason=None,
+                # Stream each step as it completes
+                try:
+                    async for step_result in agent.run_stream(prompt):
+                        accumulated_content += step_result + "\n"
+                        chunk = ChatCompletionChunkResponse(
+                            id=completion_id,
+                            created=created,
+                            model=req.model,
+                            choices=[
+                                ChatCompletionChunkChoice(
+                                    index=0,
+                                    delta=ChatCompletionChunkDelta(
+                                        content=step_result + "\n"
+                                    ),
+                                    finish_reason=None,
+                                )
+                            ],
                         )
-                    ],
-                )
-                yield f"data: {json.dumps(chunk2.model_dump())}\n\n".encode("utf-8")
+                        yield f"data: {json.dumps(chunk.model_dump())}\n\n".encode(
+                            "utf-8"
+                        )
+                finally:
+                    await agent.cleanup()
 
-                chunk3 = ChatCompletionChunkResponse(
+                # Extract the best final output for the finish chunk
+                final_content = _extract_best_output(
+                    agent, fallback=accumulated_content.strip()
+                )
+                if final_content and final_content != accumulated_content.strip():
+                    # Send the final extracted content if different from accumulated
+                    final_chunk = ChatCompletionChunkResponse(
+                        id=completion_id,
+                        created=created,
+                        model=req.model,
+                        choices=[
+                            ChatCompletionChunkChoice(
+                                index=0,
+                                delta=ChatCompletionChunkDelta(
+                                    content="\n\n---\n" + final_content
+                                ),
+                                finish_reason=None,
+                            )
+                        ],
+                    )
+                    yield f"data: {json.dumps(final_chunk.model_dump())}\n\n".encode(
+                        "utf-8"
+                    )
+
+                # Send finish chunk
+                finish_chunk = ChatCompletionChunkResponse(
                     id=completion_id,
                     created=created,
                     model=req.model,
@@ -194,10 +229,20 @@ async def chat_completions(req: ChatCompletionRequest):
                         )
                     ],
                 )
-                yield f"data: {json.dumps(chunk3.model_dump())}\n\n".encode("utf-8")
+                yield f"data: {json.dumps(finish_chunk.model_dump())}\n\n".encode(
+                    "utf-8"
+                )
                 yield b"data: [DONE]\n\n"
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        # Non-streaming path
+        agent = await Manus.create()
+        try:
+            result = await agent.run(prompt)
+            content = _extract_best_output(agent, fallback=result)
+        finally:
+            await agent.cleanup()
 
         usage = ChatCompletionUsage(
             prompt_tokens=0, completion_tokens=0, total_tokens=0

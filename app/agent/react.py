@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from pydantic import Field
 
 from app.agent.base import BaseAgent
 from app.llm import LLM
+from app.logger import logger
+from app.sandbox.client import SANDBOX_CLIENT
 from app.schema import AgentState, Memory
 
 
@@ -36,3 +38,64 @@ class ReActAgent(BaseAgent, ABC):
         if not should_act:
             return "Thinking complete - no action needed"
         return await self.act()
+
+    async def run_stream(self, request: Optional[str] = None) -> AsyncIterator[str]:
+        """Execute the agent's main loop, yielding step results as they occur.
+
+        Overrides BaseAgent.run_stream to provide more granular updates (think vs act).
+        """
+        if self.state != AgentState.IDLE:
+            raise RuntimeError(f"Cannot run agent from state: {self.state}")
+
+        if request:
+            self.update_memory("user", request)
+
+        async with self.state_context(AgentState.RUNNING):
+            while (
+                self.current_step < self.max_steps and self.state != AgentState.FINISHED
+            ):
+                self.current_step += 1
+                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
+
+                # THINK
+                should_act = await self.think()
+
+                # Yield thought if available
+                if (
+                    self.memory.messages
+                    and self.memory.messages[-1].role == "assistant"
+                ):
+                    thought_content = self.memory.messages[-1].content
+                    if thought_content:
+                        yield f"Thought: {thought_content}"
+
+                if not should_act:
+                    yield "Thinking complete - no action needed"
+                    break
+
+                # ACT
+                # Yield action execution status
+                # (Optional: In the future, we could yield individual tool calls here if available in memory)
+
+                step_result = await self.act()
+
+                # Yield snapshot if available from tool execution
+                if (
+                    hasattr(self, "_current_base64_image")
+                    and self._current_base64_image
+                ):
+                    yield f"Snapshot: {self._current_base64_image}"
+
+                # Yield observation/result
+                yield f"Observation: {step_result}"
+
+                # Check for stuck state
+                if self.is_stuck():
+                    self.handle_stuck_state()
+
+            if self.current_step >= self.max_steps:
+                self.current_step = 0
+                self.state = AgentState.IDLE
+                yield f"Terminated: Reached max steps ({self.max_steps})"
+
+        await SANDBOX_CLIENT.cleanup()
