@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM mcr.microsoft.com/playwright/python:v1.51.0-noble
 
 WORKDIR /app/OpenManus
 
@@ -10,8 +10,6 @@ COPY . .
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
-
-RUN playwright install --with-deps
 
 ENV OPENMANUS_API_HOST=0.0.0.0
 ENV OPENMANUS_API_PORT=8000
