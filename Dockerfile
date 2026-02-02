@@ -11,6 +11,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN playwright install --with-deps
+
 ENV OPENMANUS_API_HOST=0.0.0.0
 ENV OPENMANUS_API_PORT=8000
 EXPOSE 8000
