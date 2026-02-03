@@ -4,6 +4,7 @@ import json
 import os
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
@@ -13,12 +14,28 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "api_tester_config.json")
 DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "downloads")
 
+THEME = {
+    "bg": "#F7F2EA",
+    "panel": "#FFFDF9",
+    "ink": "#1E1E1E",
+    "muted": "#6B6B6B",
+    "accent": "#2F6B4F",
+    "accent_alt": "#B45309",
+    "border": "#E4D9C8",
+    "chat_user_bg": "#E3F2FF",
+    "chat_user_fg": "#1B3A57",
+    "chat_assistant_bg": "#E9F5EE",
+    "chat_assistant_fg": "#203A2D",
+    "steps_bg": "#FCFAF6",
+}
+
 
 class SettingsDialog(tk.Toplevel):
     def __init__(self, parent, config):
         super().__init__(parent)
         self.title("Settings")
         self.geometry("450x500")  # Increased height
+        self.configure(bg=THEME["bg"])
         self.config = config
         self.result = None
 
@@ -27,9 +44,9 @@ class SettingsDialog(tk.Toplevel):
         self.focus_set()
 
         # Add a scrollable container
-        canvas = tk.Canvas(self)
+        canvas = tk.Canvas(self, bg=THEME["bg"], highlightthickness=0)
         scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas)
+        scrollable_frame = tk.Frame(canvas, bg=THEME["bg"])
 
         scrollable_frame.bind(
             "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
@@ -42,34 +59,47 @@ class SettingsDialog(tk.Toplevel):
         scrollbar.pack(side="right", fill="y")
 
         # Content inside scrollable frame
-        tk.Label(scrollable_frame, text="Base URL:").pack(
-            anchor="w", padx=10, pady=(10, 0)
-        )
-        self.url_entry = tk.Entry(scrollable_frame, width=50)
+        tk.Label(
+            scrollable_frame, text="Base URL:", bg=THEME["bg"], fg=THEME["muted"]
+        ).pack(anchor="w", padx=10, pady=(10, 0))
+        self.url_entry = tk.Entry(scrollable_frame, width=50, relief="flat")
         self.url_entry.insert(0, config.get("base_url", "http://34.69.150.103:8000/v1"))
         self.url_entry.pack(fill="x", padx=10, pady=5)
 
-        tk.Label(scrollable_frame, text="Model:").pack(anchor="w", padx=10)
-        self.model_entry = tk.Entry(scrollable_frame, width=50)
+        tk.Label(
+            scrollable_frame, text="Model:", bg=THEME["bg"], fg=THEME["muted"]
+        ).pack(anchor="w", padx=10)
+        self.model_entry = tk.Entry(scrollable_frame, width=50, relief="flat")
         self.model_entry.insert(0, config.get("model", "openmanus"))
         self.model_entry.pack(fill="x", padx=10, pady=5)
 
-        tk.Label(scrollable_frame, text="API Key (Bearer):").pack(anchor="w", padx=10)
-        self.api_key_entry = tk.Entry(scrollable_frame, width=50, show="*")
+        tk.Label(
+            scrollable_frame,
+            text="API Key (Bearer):",
+            bg=THEME["bg"],
+            fg=THEME["muted"],
+        ).pack(anchor="w", padx=10)
+        self.api_key_entry = tk.Entry(scrollable_frame, width=50, show="*", relief="flat")
         self.api_key_entry.insert(0, config.get("api_key", ""))
         self.api_key_entry.pack(fill="x", padx=10, pady=5)
 
-        tk.Label(scrollable_frame, text="Groq API Key (Optional):").pack(
-            anchor="w", padx=10
-        )
-        self.groq_key_entry = tk.Entry(scrollable_frame, width=50, show="*")
+        tk.Label(
+            scrollable_frame,
+            text="Groq API Key (Optional):",
+            bg=THEME["bg"],
+            fg=THEME["muted"],
+        ).pack(anchor="w", padx=10)
+        self.groq_key_entry = tk.Entry(scrollable_frame, width=50, show="*", relief="flat")
         self.groq_key_entry.insert(0, config.get("groq_api_key", ""))
         self.groq_key_entry.pack(fill="x", padx=10, pady=5)
 
-        tk.Label(scrollable_frame, text="Daytona API Key (Optional):").pack(
-            anchor="w", padx=10
-        )
-        self.daytona_key_entry = tk.Entry(scrollable_frame, width=50, show="*")
+        tk.Label(
+            scrollable_frame,
+            text="Daytona API Key (Optional):",
+            bg=THEME["bg"],
+            fg=THEME["muted"],
+        ).pack(anchor="w", padx=10)
+        self.daytona_key_entry = tk.Entry(scrollable_frame, width=50, show="*", relief="flat")
         self.daytona_key_entry.insert(0, config.get("daytona_api_key", ""))
         self.daytona_key_entry.pack(fill="x", padx=10, pady=5)
 
@@ -77,9 +107,9 @@ class SettingsDialog(tk.Toplevel):
             scrollable_frame,
             text="Save Settings",
             command=self.save,
-            bg="#4CAF50",
+            bg=THEME["accent"],
             fg="white",
-            font=("Arial", 10, "bold"),
+            font=("Avenir", 10, "bold"),
             pady=5,
         )
         save_btn.pack(pady=20, padx=10, fill="x")
@@ -101,23 +131,36 @@ class FileBrowser(tk.Toplevel):
         self.parent = parent
         self.title("Workspace Files")
         self.geometry("520x500")
+        self.configure(bg=THEME["bg"])
         self.entries = []
 
-        top_frame = tk.Frame(self)
+        top_frame = tk.Frame(self, bg=THEME["bg"])
         top_frame.pack(fill="x", padx=10, pady=10)
 
-        tk.Label(top_frame, text="Path:").pack(side="left")
+        tk.Label(top_frame, text="Path:", bg=THEME["bg"], fg=THEME["muted"]).pack(
+            side="left"
+        )
         self.path_var = tk.StringVar(value="")
-        self.path_entry = tk.Entry(top_frame, textvariable=self.path_var)
+        self.path_entry = tk.Entry(top_frame, textvariable=self.path_var, relief="flat")
         self.path_entry.pack(side="left", fill="x", expand=True, padx=(5, 5))
 
-        tk.Button(top_frame, text="Up", command=self.go_up).pack(side="left", padx=(0, 5))
-        tk.Button(top_frame, text="Refresh", command=self.refresh).pack(side="left")
+        tk.Button(
+            top_frame, text="Up", command=self.go_up, bg=THEME["panel"]
+        ).pack(side="left", padx=(0, 5))
+        tk.Button(
+            top_frame, text="Refresh", command=self.refresh, bg=THEME["panel"]
+        ).pack(side="left")
 
-        list_frame = tk.Frame(self)
+        list_frame = tk.Frame(self, bg=THEME["bg"])
         list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        self.listbox = tk.Listbox(list_frame)
+        self.listbox = tk.Listbox(
+            list_frame,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            highlightthickness=1,
+            relief="flat",
+        )
         self.listbox.pack(side="left", fill="both", expand=True)
         self.listbox.bind("<Double-1>", self.on_double_click)
 
@@ -125,13 +168,17 @@ class FileBrowser(tk.Toplevel):
         scrollbar.pack(side="right", fill="y")
         self.listbox.config(yscrollcommand=scrollbar.set)
 
-        button_frame = tk.Frame(self)
+        button_frame = tk.Frame(self, bg=THEME["bg"])
         button_frame.pack(fill="x", padx=10, pady=(0, 10))
 
-        tk.Button(button_frame, text="Download Selected", command=self.download_selected).pack(
-            side="left"
-        )
-        self.status_label = tk.Label(button_frame, text="")
+        tk.Button(
+            button_frame,
+            text="Download Selected",
+            command=self.download_selected,
+            bg=THEME["accent"],
+            fg="white",
+        ).pack(side="left")
+        self.status_label = tk.Label(button_frame, text="", bg=THEME["bg"], fg=THEME["muted"])
         self.status_label.pack(side="right")
 
         self.refresh()
@@ -206,15 +253,20 @@ class ChatApp:
     def __init__(self, root):
         self.root = root
         self.root.title("AgentOrchestra API Chat")
-        self.root.geometry("980x700")
+        self.root.geometry("1100x760")
+        self.root.configure(bg=THEME["bg"])
 
         self.config = self.load_config()
         self.messages = []
         self.images = []  # Keep references to prevent GC
         self.response_count = 0
+        self._build_fonts()
+        self._apply_theme()
 
         # Menu
-        menubar = tk.Menu(root)
+        menubar = tk.Menu(
+            root, bg=THEME["bg"], fg=THEME["ink"], activebackground=THEME["panel"]
+        )
         filemenu = tk.Menu(menubar, tearoff=0)
         filemenu.add_command(label="Settings", command=self.open_settings)
         filemenu.add_separator()
@@ -227,21 +279,60 @@ class ChatApp:
         root.config(menu=menubar)
 
         # Header with Settings Button
-        header_frame = tk.Frame(root, pady=5)
-        header_frame.pack(fill="x", padx=10)
+        header_frame = tk.Frame(root, pady=8, bg=THEME["bg"])
+        header_frame.pack(fill="x", padx=16)
 
-        tk.Label(header_frame, text="Chat Session", font=("Arial", 12, "bold")).pack(
-            side="left"
+        title_block = tk.Frame(header_frame, bg=THEME["bg"])
+        title_block.pack(side="left")
+        tk.Label(
+            title_block,
+            text="AgentOrchestra",
+            font=self.font_title,
+            bg=THEME["bg"],
+            fg=THEME["ink"],
+        ).pack(anchor="w")
+        tk.Label(
+            title_block,
+            text="API Tester",
+            font=self.font_subtitle,
+            bg=THEME["bg"],
+            fg=THEME["muted"],
+        ).pack(anchor="w")
+
+        controls = tk.Frame(header_frame, bg=THEME["bg"])
+        controls.pack(side="right")
+        self.status_label = tk.Label(
+            controls,
+            text=self._status_text(),
+            font=self.font_small,
+            bg=THEME["bg"],
+            fg=THEME["muted"],
         )
+        self.status_label.pack(side="left", padx=(0, 10))
+
+        self.clear_button = tk.Button(
+            controls,
+            text="Clear",
+            command=self.clear_chat,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+        )
+        self.clear_button.pack(side="left", padx=(0, 8))
 
         self.settings_button = tk.Button(
-            header_frame, text="⚙️ Settings", command=self.open_settings
+            controls,
+            text="Settings",
+            command=self.open_settings,
+            bg=THEME["accent"],
+            fg="white",
+            relief="flat",
         )
-        self.settings_button.pack(side="right")
+        self.settings_button.pack(side="left")
 
         # Main Content
         content_pane = ttk.PanedWindow(root, orient="horizontal")
-        content_pane.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        content_pane.pack(fill="both", expand=True, padx=16, pady=(0, 12))
 
         left_frame = ttk.Frame(content_pane)
         right_frame = ttk.Frame(content_pane)
@@ -250,22 +341,74 @@ class ChatApp:
 
         # Chat Area (Conversation)
         self.chat_display = scrolledtext.ScrolledText(
-            left_frame, state="disabled", wrap="word"
+            left_frame, state="disabled", wrap="word", height=18
         )
         self.chat_display.pack(fill="both", expand=True)
-        self.chat_display.tag_config("user", foreground="#1a4a7a", justify="right")
-        self.chat_display.tag_config("assistant", foreground="#1f6b3a", justify="left")
-        self.chat_display.tag_config("assistant_label", foreground="#1f6b3a")
+        self.chat_display.configure(
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+            padx=12,
+            pady=12,
+            insertbackground=THEME["ink"],
+            font=self.font_body,
+        )
+        self.chat_display.tag_config(
+            "user",
+            foreground=THEME["chat_user_fg"],
+            background=THEME["chat_user_bg"],
+            justify="right",
+            lmargin1=140,
+            lmargin2=140,
+            rmargin=24,
+            spacing1=6,
+            spacing3=8,
+        )
+        self.chat_display.tag_config(
+            "assistant",
+            foreground=THEME["chat_assistant_fg"],
+            background=THEME["chat_assistant_bg"],
+            justify="left",
+            lmargin1=24,
+            lmargin2=24,
+            rmargin=140,
+            spacing1=6,
+            spacing3=8,
+        )
+        self.chat_display.tag_config(
+            "assistant_label", foreground=THEME["chat_assistant_fg"]
+        )
+        self.chat_display.tag_config("user_label", foreground=THEME["chat_user_fg"])
 
         # Input Area
-        input_frame = tk.Frame(left_frame)
+        input_frame = tk.Frame(left_frame, bg=THEME["bg"])
         input_frame.pack(fill="x", padx=0, pady=10)
 
-        self.input_text = tk.Text(input_frame, height=3)
+        self.input_text = tk.Text(
+            input_frame,
+            height=3,
+            bg="#FFFEFB",
+            fg=THEME["ink"],
+            relief="flat",
+            padx=10,
+            pady=8,
+            font=self.font_body,
+            insertbackground=THEME["ink"],
+        )
         self.input_text.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.input_text.bind("<Return>", self.handle_return)
 
-        self.send_button = tk.Button(input_frame, text="Send", command=self.send_message)
+        self.send_button = tk.Button(
+            input_frame,
+            text="Send",
+            command=self.send_message,
+            bg=THEME["accent"],
+            fg="white",
+            relief="flat",
+            padx=18,
+            pady=6,
+            font=self.font_small_bold,
+        )
         self.send_button.pack(side="right")
 
         # Right Panel: Steps & Final Response
@@ -281,15 +424,35 @@ class ChatApp:
             steps_frame, state="disabled", wrap="word"
         )
         self.steps_display.pack(fill="both", expand=True)
-        self.steps_display.tag_config("step", foreground="#555555")
-        self.steps_display.tag_config("step_header", foreground="#333333", font=("Arial", 10, "bold"))
+        self.steps_display.configure(
+            bg=THEME["steps_bg"],
+            fg=THEME["ink"],
+            relief="flat",
+            padx=12,
+            pady=10,
+            font=self.font_small,
+        )
+        self.steps_display.tag_config("step", foreground=THEME["muted"])
+        self.steps_display.tag_config(
+            "step_header", foreground=THEME["ink"], font=self.font_small_bold
+        )
 
         self.final_display = scrolledtext.ScrolledText(
             final_frame, state="disabled", wrap="word"
         )
         self.final_display.pack(fill="both", expand=True)
-        self.final_display.tag_config("final_header", foreground="#333333", font=("Arial", 10, "bold"))
-        self.final_display.tag_config("assistant", foreground="#1f6b3a")
+        self.final_display.configure(
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+            padx=12,
+            pady=10,
+            font=self.font_body,
+        )
+        self.final_display.tag_config(
+            "final_header", foreground=THEME["muted"], font=self.font_small_bold
+        )
+        self.final_display.tag_config("assistant", foreground=THEME["chat_assistant_fg"])
 
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
@@ -306,6 +469,62 @@ class ChatApp:
             "daytona_api_key": "",
         }
 
+    def _build_fonts(self):
+        self.font_title = tkfont.Font(family="Avenir Next", size=18, weight="bold")
+        self.font_subtitle = tkfont.Font(family="Avenir", size=11, weight="normal")
+        self.font_body = tkfont.Font(family="Avenir", size=11)
+        self.font_small = tkfont.Font(family="Avenir", size=10)
+        self.font_small_bold = tkfont.Font(
+            family="Avenir", size=10, weight="bold"
+        )
+        self.root.option_add("*Font", self.font_body)
+
+    def _apply_theme(self):
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure(
+            "TFrame", background=THEME["bg"], borderwidth=0, relief="flat"
+        )
+        style.configure(
+            "TNotebook",
+            background=THEME["bg"],
+            borderwidth=0,
+            padding=4,
+        )
+        style.configure(
+            "TNotebook.Tab",
+            background=THEME["panel"],
+            foreground=THEME["ink"],
+            padding=[12, 6],
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", THEME["accent"])],
+            foreground=[("selected", "white")],
+        )
+        style.configure("TPanedwindow", background=THEME["bg"])
+
+    def _status_text(self):
+        base_url = self.config.get("base_url", "")
+        model = self.config.get("model", "")
+        return f"{model}  |  {base_url}"
+
+    def clear_chat(self):
+        self.messages = []
+        self.response_count = 0
+        self.chat_display.config(state="normal")
+        self.chat_display.delete("1.0", tk.END)
+        self.chat_display.config(state="disabled")
+        self.steps_display.config(state="normal")
+        self.steps_display.delete("1.0", tk.END)
+        self.steps_display.config(state="disabled")
+        self.final_display.config(state="normal")
+        self.final_display.delete("1.0", tk.END)
+        self.final_display.config(state="disabled")
+
     def save_config(self):
         with open(CONFIG_FILE, "w") as f:
             json.dump(self.config, f, indent=4)
@@ -316,6 +535,8 @@ class ChatApp:
         if dialog.result:
             self.config = dialog.result
             self.save_config()
+            if hasattr(self, "status_label"):
+                self.status_label.config(text=self._status_text())
             messagebox.showinfo("Settings", "Settings saved successfully!")
 
     def handle_return(self, event):
@@ -339,12 +560,16 @@ class ChatApp:
         widget.see(tk.END)
         widget.config(state="disabled")
 
+    def set_status(self, text):
+        if hasattr(self, "status_label"):
+            self.status_label.config(text=text)
+
     def append_message(self, role, content):
         if role == "system":
             self.append_step_message(content)
             return
         if role == "user":
-            self.append_chat_message("User", content, "user")
+            self.append_chat_message("You", content, "user")
             self.messages.append({"role": role, "content": content})
             return
         if role == "assistant":
@@ -354,7 +579,8 @@ class ChatApp:
             return
 
     def append_chat_message(self, label, content, tag):
-        self._append_to(self.chat_display, f"{label}: ", f"{tag}_label" if tag == "assistant" else tag)
+        label_tag = f"{tag}_label" if tag in {"assistant", "user"} else tag
+        self._append_to(self.chat_display, f"{label}\n", label_tag)
         self._append_to(self.chat_display, f"{content}\n\n", tag)
 
     def append_step_message(self, content):
@@ -372,7 +598,7 @@ class ChatApp:
 
     def start_assistant_response(self):
         self.response_count += 1
-        self._append_to(self.chat_display, "Assistant: ", "assistant_label")
+        self._append_to(self.chat_display, "Assistant\n", "assistant_label")
         self._append_to(
             self.final_display,
             f"Response {self.response_count}\n",
@@ -480,6 +706,7 @@ class ChatApp:
                 image = image.resize(new_size, Image.LANCZOS)
             img = ImageTk.PhotoImage(image)
             self.steps_display.config(state="normal")
+            self.steps_display.insert(tk.END, "Snapshot\n", "step_header")
             self.steps_display.image_create(tk.END, image=img)
             self.steps_display.insert(tk.END, "\n", "step")
             self.steps_display.see(tk.END)
@@ -498,6 +725,7 @@ class ChatApp:
 
         # Run in thread
         self.send_button.config(state=tk.DISABLED)
+        self.set_status("Streaming response...")
         thread = threading.Thread(target=self.run_api_request)
         thread.start()
 
@@ -635,6 +863,7 @@ class ChatApp:
             )
         finally:
             self.root.after(0, lambda: self.send_button.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self.set_status(self._status_text()))
 
 
 if __name__ == "__main__":
