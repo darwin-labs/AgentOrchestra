@@ -31,9 +31,15 @@ from app.config import config
 from app.schema import Message
 from app.sandbox.client import SANDBOX_CLIENT
 from app.utils.files_utils import should_exclude_file
+from app.utils.workspace_layout import (
+    LAYOUT,
+    ensure_workspace_layout,
+    pick_upload_path,
+    relative_to_root,
+    update_manifest,
+)
 
 _ATTACHMENT_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
-_UPLOAD_DIR = Path(config.workspace_root) / "uploads"
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 _MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 
@@ -85,41 +91,6 @@ def _extract_best_output(agent: Manus, fallback: str) -> str:
     return fallback
 
 
-def _prompt_from_messages(req: ChatCompletionRequest) -> str:
-    last_user: Optional[str] = None
-    system_parts: list[str] = []
-
-    for m in req.messages:
-        if m.content is None:
-            continue
-        if isinstance(m.content, list):
-            text_parts = []
-            for item in m.content:
-                if isinstance(item, str):
-                    text_parts.append(item)
-                elif isinstance(item, dict) and "text" in item:
-                    text_parts.append(str(item["text"]))
-            content_text = "\n".join(text_parts).strip()
-        else:
-            content_text = str(m.content)
-
-        if not content_text:
-            continue
-
-        if m.role == "system":
-            system_parts.append(content_text)
-        if m.role == "user":
-            last_user = content_text
-
-    if last_user is None:
-        raise HTTPException(status_code=400, detail="No user message found")
-
-    if system_parts:
-        return "\n\n".join(system_parts + [last_user])
-
-    return last_user
-
-
 def _is_image_part(part: Any) -> bool:
     if not isinstance(part, dict):
         return False
@@ -153,6 +124,18 @@ def _decode_data_url(data_url: str) -> Optional[bytes]:
     return base64.b64decode(encoded)
 
 
+def _extract_data_url_meta(data_url: str) -> Tuple[Optional[str], Optional[bytes]]:
+    if not data_url.startswith("data:"):
+        return None, None
+    header, _, data_part = data_url.partition(",")
+    if not header or not data_part:
+        return None, None
+    mime = header.split(":", 1)[-1].split(";", 1)[0] if ":" in header else None
+    if "base64" not in header:
+        return mime, None
+    return mime, base64.b64decode(data_part)
+
+
 def _extract_file_payload(part: dict) -> Tuple[str, str, bytes]:
     file_obj = part.get("file") if isinstance(part.get("file"), dict) else part
 
@@ -177,14 +160,14 @@ def _extract_file_payload(part: dict) -> Tuple[str, str, bytes]:
     )
 
     if not data and isinstance(file_obj.get("url"), str):
-        decoded = _decode_data_url(file_obj.get("url"))
+        mime_hint, decoded = _extract_data_url_meta(file_obj.get("url"))
         if decoded is not None:
-            return filename, mime_type, decoded
+            return filename, mime_hint or mime_type, decoded
 
     if not data and isinstance(part.get("url"), str):
-        decoded = _decode_data_url(part.get("url"))
+        mime_hint, decoded = _extract_data_url_meta(part.get("url"))
         if decoded is not None:
-            return filename, mime_type, decoded
+            return filename, mime_hint or mime_type, decoded
 
     if data:
         if isinstance(data, str) and data.startswith("data:"):
@@ -203,27 +186,78 @@ def _extract_file_payload(part: dict) -> Tuple[str, str, bytes]:
     raise ValueError("No file data provided")
 
 
-def _unique_upload_path(filename: str) -> Path:
-    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    candidate = _UPLOAD_DIR / filename
-    if not candidate.exists():
-        return candidate
-    stem = candidate.stem
-    suffix = candidate.suffix
-    counter = 1
-    while True:
-        alt = _UPLOAD_DIR / f"{stem}_{counter}{suffix}"
-        if not alt.exists():
-            return alt
-        counter += 1
+def _extract_image_payload(part: dict) -> Optional[Tuple[str, str, bytes]]:
+    image_obj = None
+    if "image_url" in part:
+        image_obj = part.get("image_url")
+    elif "image" in part:
+        image_obj = {"data": part.get("image")}
+
+    if image_obj is None:
+        return None
+
+    url = None
+    if isinstance(image_obj, dict):
+        url = image_obj.get("url")
+        if not url and isinstance(image_obj.get("data"), str):
+            try:
+                decoded = base64.b64decode(image_obj["data"])
+            except Exception:
+                return None
+            return "image_upload", part.get("mime_type") or "image/png", decoded
+    elif isinstance(image_obj, str):
+        url = image_obj
+
+    if not isinstance(url, str):
+        return None
+
+    mime, decoded = _extract_data_url_meta(url)
+    if decoded is None:
+        return None
+    return "image_upload", mime or "image/png", decoded
 
 
-def _normalize_messages(
+async def _ensure_sandbox_layout() -> None:
+    if not config.sandbox or not config.sandbox.use_sandbox:
+        return
+    if not SANDBOX_CLIENT.sandbox:
+        await SANDBOX_CLIENT.create(config=config.sandbox)
+
+    inputs = LAYOUT["inputs"]
+    paths = [
+        os.path.join(config.sandbox.work_dir, rel)
+        for rel in inputs.values()
+    ]
+    paths.append(os.path.join(config.sandbox.work_dir, str(LAYOUT["outputs"])))
+    paths.append(os.path.join(config.sandbox.work_dir, str(LAYOUT["scratch"])))
+    cmd = "mkdir -p " + " ".join(paths)
+    await SANDBOX_CLIENT.run_command(cmd)
+
+
+async def _sync_manifest_to_sandbox(manifest: dict) -> None:
+    if not config.sandbox or not config.sandbox.use_sandbox:
+        return
+    await _ensure_sandbox_layout()
+    manifest_path = os.path.join(config.sandbox.work_dir, str(LAYOUT["manifest"]))
+    await SANDBOX_CLIENT.write_file(manifest_path, json.dumps(manifest, indent=2))
+
+
+async def _sync_file_to_sandbox(local_path: Path, rel_path: str) -> None:
+    if not config.sandbox or not config.sandbox.use_sandbox:
+        return
+    await _ensure_sandbox_layout()
+    target_path = os.path.join(config.sandbox.work_dir, rel_path)
+    await SANDBOX_CLIENT.copy_to(str(local_path), target_path)
+
+
+async def _normalize_messages(
     req: ChatCompletionRequest,
 ) -> Tuple[list[Message], bool]:
     has_user = False
     has_attachment = False
     messages: list[Message] = []
+    workspace_root = Path(config.workspace_root)
+    ensure_workspace_layout(workspace_root)
 
     for msg in req.messages:
         content = msg.content
@@ -239,7 +273,35 @@ def _normalize_messages(
 
                 if _is_image_part(part):
                     has_attachment = True
-                    normalized_parts.append(part)
+                    image_payload = _extract_image_payload(part)
+                    if image_payload:
+                        filename, mime_type, data = image_payload
+                        save_path, category = pick_upload_path(
+                            workspace_root, filename, mime_type
+                        )
+                        save_path.write_bytes(data)
+                        rel_path = relative_to_root(workspace_root, save_path)
+                        manifest_entry = {
+                            "path": rel_path,
+                            "name": save_path.name,
+                            "category": category,
+                            "mime_type": mime_type,
+                            "size": len(data),
+                            "source": "client_upload",
+                            "added_at": time.time(),
+                        }
+                        manifest = update_manifest(workspace_root, manifest_entry)
+                        await _sync_file_to_sandbox(save_path, rel_path)
+                        await _sync_manifest_to_sandbox(manifest)
+                        normalized_parts.append(part)
+                        normalized_parts.append(
+                            {
+                                "type": "text",
+                                "text": f"[User uploaded image saved to {rel_path} ({mime_type})]",
+                            }
+                        )
+                    else:
+                        normalized_parts.append(part)
                     continue
 
                 if _is_file_part(part):
@@ -255,9 +317,23 @@ def _normalize_messages(
                             detail=f"File '{filename}' exceeds max upload size ({_MAX_UPLOAD_BYTES} bytes)",
                         )
 
-                    save_path = _unique_upload_path(filename)
+                    save_path, category = pick_upload_path(
+                        workspace_root, filename, mime_type
+                    )
                     save_path.write_bytes(data)
-                    rel_path = str(save_path.relative_to(config.workspace_root))
+                    rel_path = relative_to_root(workspace_root, save_path)
+                    manifest_entry = {
+                        "path": rel_path,
+                        "name": save_path.name,
+                        "category": category,
+                        "mime_type": mime_type,
+                        "size": len(data),
+                        "source": "client_upload",
+                        "added_at": time.time(),
+                    }
+                    manifest = update_manifest(workspace_root, manifest_entry)
+                    await _sync_file_to_sandbox(save_path, rel_path)
+                    await _sync_manifest_to_sandbox(manifest)
                     normalized_parts.append(
                         {
                             "type": "text",
@@ -492,10 +568,12 @@ async def list_workspace_files(
         raise HTTPException(status_code=404, detail="Path not found")
 
     if config.sandbox and config.sandbox.use_sandbox:
+        await _ensure_sandbox_layout()
         sandbox_root = config.sandbox.work_dir
         target = os.path.join(sandbox_root, rel_path) if rel_path else sandbox_root
         entries = await _list_sandbox_entries(target, recursive)
     else:
+        ensure_workspace_layout(Path(config.workspace_root))
         target = _resolve_local_path(rel_path)
         if not target.exists():
             raise HTTPException(status_code=404, detail="Path not found")
@@ -511,6 +589,7 @@ async def get_workspace_file(path: str = Query(...)):
         raise HTTPException(status_code=404, detail="Path not found")
 
     if config.sandbox and config.sandbox.use_sandbox:
+        await _ensure_sandbox_layout()
         sandbox_root = config.sandbox.work_dir
         target = os.path.join(sandbox_root, rel_path)
         stat = await _sandbox_stat(target)
@@ -540,7 +619,7 @@ async def chat_completions(req: ChatCompletionRequest):
         return _error_response("'messages' must not be empty", status_code=400)
 
     try:
-        normalized_messages, has_attachment = _normalize_messages(req)
+        normalized_messages, has_attachment = await _normalize_messages(req)
     except HTTPException as e:
         return _error_response(str(e.detail), status_code=e.status_code)
 
