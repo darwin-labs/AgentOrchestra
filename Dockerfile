@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl build-
 
 COPY . .
 
-RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip install --break-system-packages -r requirements.txt
 
 ENV OPENMANUS_API_HOST=0.0.0.0
 ENV OPENMANUS_API_PORT=8000
