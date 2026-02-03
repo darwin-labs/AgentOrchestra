@@ -32,6 +32,7 @@ class ToolCallAgent(ReActAgent):
 
     tool_calls: List[ToolCall] = Field(default_factory=list)
     _current_base64_image: Optional[str] = None
+    _current_file_payload: Optional[dict] = None
     _last_tool_events: List[dict] = Field(default_factory=list)
 
     max_steps: int = 30
@@ -143,6 +144,7 @@ class ToolCallAgent(ReActAgent):
         for command in self.tool_calls:
             # Reset base64_image for each tool call
             self._current_base64_image = None
+            self._current_file_payload = None
 
             parsed_args = {}
             try:
@@ -174,6 +176,7 @@ class ToolCallAgent(ReActAgent):
                     "arguments": parsed_args,
                     "result": result,
                     "base64_image": self._current_base64_image,
+                    "file_payload": self._current_file_payload,
                 }
             )
 
@@ -203,6 +206,16 @@ class ToolCallAgent(ReActAgent):
             if hasattr(result, "base64_image") and result.base64_image:
                 # Store the base64_image for later use in tool_message
                 self._current_base64_image = result.base64_image
+
+            # Check if result includes a file payload
+            if hasattr(result, "base64_file") and result.base64_file:
+                self._current_file_payload = {
+                    "base64": result.base64_file,
+                    "file_name": getattr(result, "file_name", None),
+                    "file_path": getattr(result, "file_path", None),
+                    "mime_type": getattr(result, "mime_type", None),
+                    "file_size": getattr(result, "file_size", None),
+                }
 
             # Format result for display (standard case)
             observation = (

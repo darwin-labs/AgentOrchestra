@@ -41,6 +41,11 @@ class ToolResult(BaseModel):
     output: Any = Field(default=None)
     error: Optional[str] = Field(default=None)
     base64_image: Optional[str] = Field(default=None)
+    base64_file: Optional[str] = Field(default=None)
+    file_name: Optional[str] = Field(default=None)
+    file_path: Optional[str] = Field(default=None)
+    mime_type: Optional[str] = Field(default=None)
+    file_size: Optional[int] = Field(default=None)
     system: Optional[str] = Field(default=None)
 
     class Config:
@@ -63,6 +68,11 @@ class ToolResult(BaseModel):
             output=combine_fields(self.output, other.output),
             error=combine_fields(self.error, other.error),
             base64_image=combine_fields(self.base64_image, other.base64_image, False),
+            base64_file=combine_fields(self.base64_file, other.base64_file, False),
+            file_name=combine_fields(self.file_name, other.file_name, False),
+            file_path=combine_fields(self.file_path, other.file_path, False),
+            mime_type=combine_fields(self.mime_type, other.mime_type, False),
+            file_size=combine_fields(self.file_size, other.file_size, False),
             system=combine_fields(self.system, other.system),
         )
 

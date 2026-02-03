@@ -107,6 +107,9 @@ class ReActAgent(BaseAgent, ABC):
                             if event.get("base64_image"):
                                 browser_snapshot_emitted = True
                                 yield f"BrowserSnapshot: {event['base64_image']}"
+                        file_payload = event.get("file_payload")
+                        if file_payload and file_payload.get("base64"):
+                            yield f"FileShare: {json.dumps(file_payload, ensure_ascii=False)}"
 
                     # Yield snapshot if available from tool execution
                     if (

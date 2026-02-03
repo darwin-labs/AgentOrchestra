@@ -9,6 +9,7 @@ import requests
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "api_tester_config.json")
+DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "downloads")
 
 
 class SettingsDialog(tk.Toplevel):
@@ -201,6 +202,36 @@ class ChatApp:
     def display_log(self, log_text):
         self.append_message("system", log_text)
 
+    def _unique_download_path(self, filename):
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        base, ext = os.path.splitext(filename)
+        candidate = os.path.join(DOWNLOAD_DIR, filename)
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = os.path.join(DOWNLOAD_DIR, f"{base}_{counter}{ext}")
+            counter += 1
+        return candidate
+
+    def display_file(self, payload):
+        try:
+            file_name = payload.get("file_name") or "shared_file"
+            base64_data = payload.get("base64")
+            if not base64_data:
+                self.append_message("system", "Received file share with no data.")
+                return
+            file_bytes = base64.b64decode(base64_data)
+            save_path = self._unique_download_path(file_name)
+            with open(save_path, "wb") as f:
+                f.write(file_bytes)
+            size = payload.get("file_size") or len(file_bytes)
+            mime = payload.get("mime_type") or "application/octet-stream"
+            self.append_message(
+                "system",
+                f"Received file '{file_name}' ({size} bytes, {mime}) saved to {save_path}",
+            )
+        except Exception as e:
+            self.append_message("system", f"Failed to save shared file: {str(e)}")
+
     def display_image(self, base64_str):
         try:
             image_data = base64.b64decode(base64_str)
@@ -310,6 +341,18 @@ class ChatApp:
                                                 lambda t=content.strip(): self.display_log(
                                                     t
                                                 ),
+                                            )
+                                        elif content.startswith("FileShare: "):
+                                            payload_str = content.replace(
+                                                "FileShare: ", ""
+                                            ).strip()
+                                            try:
+                                                payload = json.loads(payload_str)
+                                            except json.JSONDecodeError:
+                                                payload = {}
+                                            self.root.after(
+                                                0,
+                                                lambda p=payload: self.display_file(p),
                                             )
                                         elif content.startswith("Snapshot: "):
                                             base64_img = content.replace(
