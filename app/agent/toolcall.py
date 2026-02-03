@@ -1,15 +1,19 @@
 import asyncio
 import json
+from pathlib import Path
+from urllib.parse import quote
 from typing import Any, List, Optional, Union
 
 from pydantic import Field, PrivateAttr
 
+from app.config import config
 from app.agent.react import ReActAgent
 from app.exceptions import TokenLimitExceeded
 from app.logger import logger
 from app.prompt.toolcall import NEXT_STEP_PROMPT, SYSTEM_PROMPT
 from app.schema import TOOL_CHOICE_TYPE, AgentState, Message, ToolCall, ToolChoice
 from app.tool import CreateChatCompletion, Terminate, ToolCollection
+from app.utils.files_utils import clean_path
 
 
 TOOL_CALL_REQUIRED = "Tool calls required but none provided"
@@ -34,9 +38,46 @@ class ToolCallAgent(ReActAgent):
     _current_base64_image: Optional[str] = PrivateAttr(default=None)
     _current_file_payload: Optional[dict] = PrivateAttr(default=None)
     _last_tool_events: List[dict] = PrivateAttr(default_factory=list)
+    _shared_files: List[dict] = PrivateAttr(default_factory=list)
 
     max_steps: int = 30
     max_observe: Optional[Union[int, bool]] = None
+
+    def _workspace_root(self) -> str:
+        if config.sandbox and config.sandbox.use_sandbox:
+            return config.sandbox.work_dir
+        return str(config.workspace_root)
+
+    def _relative_workspace_path(self, path: Optional[str]) -> Optional[str]:
+        if not path:
+            return None
+        path_str = str(path)
+        workspace_root = self._workspace_root()
+
+        try:
+            rel = Path(path_str).resolve().relative_to(Path(workspace_root).resolve())
+            return rel.as_posix()
+        except Exception:
+            pass
+
+        marker = "/workspace/"
+        if marker in path_str:
+            return path_str.split(marker, 1)[1].lstrip("/")
+
+        try:
+            return clean_path(path_str, workspace_root)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _download_url(rel_path: Optional[str]) -> Optional[str]:
+        if not rel_path:
+            return None
+        return f"/v1/workspace/file?path={quote(rel_path)}"
+
+    @property
+    def shared_files(self) -> List[dict]:
+        return list(self._shared_files)
 
     async def think(self) -> bool:
         """Process current state and decide next actions using tools"""
@@ -210,13 +251,21 @@ class ToolCallAgent(ReActAgent):
 
             # Check if result includes a file payload
             if hasattr(result, "base64_file") and result.base64_file:
+                file_path = getattr(result, "file_path", None)
+                rel_path = self._relative_workspace_path(file_path)
+                file_name = getattr(result, "file_name", None)
+                if not file_name:
+                    file_name = Path(rel_path or file_path or "shared_file").name
+
                 self._current_file_payload = {
                     "base64": result.base64_file,
-                    "file_name": getattr(result, "file_name", None),
-                    "file_path": getattr(result, "file_path", None),
+                    "file_name": file_name,
                     "mime_type": getattr(result, "mime_type", None),
                     "file_size": getattr(result, "file_size", None),
+                    "path": rel_path,
+                    "download_url": self._download_url(rel_path),
                 }
+                self._shared_files.append(self._current_file_payload)
 
             # Format result for display (standard case)
             observation = (

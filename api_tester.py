@@ -1,11 +1,12 @@
 import base64
 import io
 import json
+import mimetypes
 import os
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox, scrolledtext, simpledialog, ttk
+from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 from PIL import Image, ImageTk
@@ -13,6 +14,7 @@ from PIL import Image, ImageTk
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "api_tester_config.json")
 DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "downloads")
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB, matches server limit
 
 THEME = {
     "bg": "#F7F2EA",
@@ -259,6 +261,7 @@ class ChatApp:
         self.config = self.load_config()
         self.messages = []
         self.images = []  # Keep references to prevent GC
+        self.attachments = []
         self.response_count = 0
         self._build_fonts()
         self._apply_theme()
@@ -412,6 +415,56 @@ class ChatApp:
         )
         self.send_button.grid(row=0, column=1, sticky="e")
 
+        attachments_frame = tk.Frame(left_frame, bg=THEME["bg"])
+        attachments_frame.pack(fill="x", padx=0, pady=(0, 10))
+
+        self.attachments_list = tk.Listbox(
+            attachments_frame,
+            height=3,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            highlightthickness=1,
+            relief="flat",
+            selectmode=tk.SINGLE,
+        )
+        self.attachments_list.pack(side="left", fill="both", expand=True)
+
+        attachment_buttons = tk.Frame(attachments_frame, bg=THEME["bg"])
+        attachment_buttons.pack(side="right", padx=(8, 0))
+
+        tk.Button(
+            attachment_buttons,
+            text="Attach File",
+            command=self.add_file_attachment,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+        ).pack(fill="x", pady=(0, 4))
+        tk.Button(
+            attachment_buttons,
+            text="Attach Image",
+            command=self.add_image_attachment,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+        ).pack(fill="x", pady=(0, 4))
+        tk.Button(
+            attachment_buttons,
+            text="Remove",
+            command=self.remove_selected_attachment,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+        ).pack(fill="x", pady=(0, 4))
+        tk.Button(
+            attachment_buttons,
+            text="Clear",
+            command=self.clear_attachments,
+            bg=THEME["panel"],
+            fg=THEME["ink"],
+            relief="flat",
+        ).pack(fill="x")
+
         # Right Panel: Steps & Final Response
         notebook = ttk.Notebook(right_frame)
         notebook.pack(fill="both", expand=True)
@@ -525,6 +578,7 @@ class ChatApp:
         self.final_display.config(state="normal")
         self.final_display.delete("1.0", tk.END)
         self.final_display.config(state="disabled")
+        self.clear_attachments()
 
     def save_config(self):
         with open(CONFIG_FILE, "w") as f:
@@ -570,7 +624,8 @@ class ChatApp:
             self.append_step_message(content)
             return
         if role == "user":
-            self.append_chat_message("You", content, "user")
+            display_content = self._render_content_preview(content)
+            self.append_chat_message("You", display_content, "user")
             self.messages.append({"role": role, "content": content})
             return
         if role == "assistant":
@@ -716,13 +771,141 @@ class ChatApp:
         except Exception as e:
             print(f"Image error: {e}")
 
+    def _format_bytes(self, size):
+        if size < 1024:
+            return f"{size} B"
+        if size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size / (1024 * 1024):.1f} MB"
+
+    def _render_content_preview(self, content):
+        if isinstance(content, list):
+            texts = []
+            attachments = []
+            for part in content:
+                if isinstance(part, dict):
+                    if part.get("type") == "text" and part.get("text"):
+                        texts.append(part.get("text"))
+                        continue
+                    if part.get("type") in {"input_image", "image_url"} or "image" in part:
+                        name = part.get("filename") or "image"
+                        attachments.append(name)
+                        continue
+                    if part.get("type") in {"input_file", "file"} or "data" in part:
+                        name = part.get("filename") or "file"
+                        attachments.append(name)
+                        continue
+                elif isinstance(part, str):
+                    texts.append(part)
+            preview = "\n".join(t for t in texts if t)
+            if attachments:
+                label = "Attachments: " + ", ".join(attachments)
+                preview = f"{preview}\n{label}" if preview else label
+            return preview or "Attachments sent."
+        return content
+
+    def _add_attachment(self, path, kind):
+        if not path or not os.path.isfile(path):
+            return
+        existing_paths = {item["path"] for item in self.attachments}
+        if path in existing_paths:
+            return
+        size = os.path.getsize(path)
+        if size > MAX_UPLOAD_BYTES:
+            messagebox.showerror(
+                "File Too Large",
+                f"{os.path.basename(path)} exceeds {self._format_bytes(MAX_UPLOAD_BYTES)}.",
+            )
+            return
+        mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        if kind == "image" and not mime_type.startswith("image/"):
+            messagebox.showerror(
+                "Not an Image", f"{os.path.basename(path)} does not look like an image."
+            )
+            return
+        self.attachments.append(
+            {
+                "path": path,
+                "name": os.path.basename(path),
+                "size": size,
+                "mime_type": mime_type,
+                "kind": kind,
+            }
+        )
+        self._refresh_attachments_list()
+
+    def _refresh_attachments_list(self):
+        self.attachments_list.delete(0, tk.END)
+        for item in self.attachments:
+            label = f"{item['name']} ({item['kind']}, {self._format_bytes(item['size'])})"
+            self.attachments_list.insert(tk.END, label)
+
+    def add_file_attachment(self):
+        paths = filedialog.askopenfilenames(title="Select files to attach")
+        for path in paths:
+            self._add_attachment(path, "file")
+
+    def add_image_attachment(self):
+        paths = filedialog.askopenfilenames(
+            title="Select images to attach",
+            filetypes=[
+                ("Images", "*.png *.jpg *.jpeg *.gif *.webp *.bmp *.tiff"),
+                ("All files", "*.*"),
+            ],
+        )
+        for path in paths:
+            self._add_attachment(path, "image")
+
+    def remove_selected_attachment(self):
+        selection = self.attachments_list.curselection()
+        if not selection:
+            return
+        index = selection[0]
+        if 0 <= index < len(self.attachments):
+            self.attachments.pop(index)
+            self._refresh_attachments_list()
+
+    def clear_attachments(self):
+        self.attachments = []
+        if hasattr(self, "attachments_list"):
+            self._refresh_attachments_list()
+
     def send_message(self):
         content = self.input_text.get("1.0", tk.END).strip()
-        if not content:
+        if not content and not self.attachments:
             return
 
         self.input_text.delete("1.0", tk.END)
-        self.append_message("user", content)
+        message_content = content
+        if self.attachments:
+            parts = []
+            if content:
+                parts.append({"type": "text", "text": content})
+            for attachment in self.attachments:
+                with open(attachment["path"], "rb") as f:
+                    data = f.read()
+                encoded = base64.b64encode(data).decode("utf-8")
+                if attachment["kind"] == "image":
+                    parts.append(
+                        {
+                            "type": "input_image",
+                            "image": encoded,
+                            "mime_type": attachment["mime_type"],
+                            "filename": attachment["name"],
+                        }
+                    )
+                else:
+                    parts.append(
+                        {
+                            "type": "input_file",
+                            "filename": attachment["name"],
+                            "mime_type": attachment["mime_type"],
+                            "data": encoded,
+                        }
+                    )
+            message_content = parts
+        self.append_message("user", message_content)
+        self.clear_attachments()
 
         # Run in thread
         self.send_button.config(state=tk.DISABLED)

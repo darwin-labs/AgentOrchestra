@@ -4,6 +4,8 @@ SYSTEM_PROMPT = (
     "Workspace layout: {directory}/manifest.json (metadata), "
     "{directory}/inputs/documents, {directory}/inputs/data, {directory}/inputs/images, {directory}/inputs/files "
     "for client-provided assets, {directory}/outputs for deliverables, and {directory}/scratch for temporary work."
+    "When you create a deliverable file, save it under {directory}/outputs and call the `share_file` tool with a path relative to the workspace (e.g., outputs/report.md). "
+    "In your response, reference only the relative path (like outputs/report.md) and avoid absolute filesystem paths."
 )
 
 NEXT_STEP_PROMPT = """

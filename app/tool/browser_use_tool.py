@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import os
 from typing import Generic, Optional, TypeVar
 
 from browser_use import Browser as BrowserUseBrowser
@@ -55,6 +56,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     "get_dropdown_options",
                     "select_dropdown_option",
                     "go_back",
+                    "refresh",
                     "web_search",
                     "wait",
                     "extract_content",
@@ -115,6 +117,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
             "get_dropdown_options": ["index"],
             "select_dropdown_option": ["index", "text"],
             "go_back": [],
+            "refresh": [],
             "web_search": ["query"],
             "wait": ["seconds"],
             "extract_content": ["goal"],
@@ -141,7 +144,14 @@ class BrowserUseTool(BaseTool, Generic[Context]):
     async def _ensure_browser_initialized(self) -> BrowserContext:
         """Ensure browser and context are initialized."""
         if self.browser is None:
-            browser_config_kwargs = {"headless": False, "disable_security": True}
+            has_display = bool(
+                os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+            )
+            # Default to headless when no display is available to avoid launch failures.
+            browser_config_kwargs = {
+                "headless": not has_display,
+                "disable_security": True,
+            }
 
             if config.browser_config:
                 from browser_use.browser.browser import ProxySettings
@@ -168,6 +178,10 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     if value is not None:
                         if not isinstance(value, list) or value:
                             browser_config_kwargs[attr] = value
+
+            # If there's no display, force headless to prevent Playwright launch errors.
+            if not has_display and browser_config_kwargs.get("headless") is False:
+                browser_config_kwargs["headless"] = True
 
             self.browser = BrowserUseBrowser(BrowserConfig(**browser_config_kwargs))
 

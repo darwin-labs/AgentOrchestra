@@ -65,6 +65,15 @@ class ChatCompletionUsage(BaseModel):
     total_tokens: int = 0
 
 
+class SharedFile(BaseModel):
+    file_name: str
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+    path: Optional[str] = None
+    download_url: Optional[str] = None
+    base64: Optional[str] = None
+
+
 class ChatCompletionResponse(BaseModel):
     id: str
     object: Literal["chat.completion"] = "chat.completion"
@@ -72,6 +81,7 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: List[ChatCompletionChoice]
     usage: ChatCompletionUsage = Field(default_factory=ChatCompletionUsage)
+    files: Optional[List[SharedFile]] = None
 
 
 class ChatCompletionChunkDelta(BaseModel):

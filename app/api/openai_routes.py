@@ -755,10 +755,12 @@ async def chat_completions(req: ChatCompletionRequest):
 
         # Non-streaming path
         agent = await Manus.create()
+        shared_files = None
         try:
             agent.messages = normalized_messages
             result = await agent.run()
             content = _extract_best_output(agent, fallback=result)
+            shared_files = getattr(agent, "shared_files", None)
         finally:
             await agent.cleanup()
 
@@ -777,6 +779,7 @@ async def chat_completions(req: ChatCompletionRequest):
                 )
             ],
             usage=usage,
+            files=shared_files or None,
         )
         return resp
     except Exception as e:
