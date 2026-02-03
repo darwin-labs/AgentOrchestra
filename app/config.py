@@ -140,6 +140,12 @@ class MCPServerConfig(BaseModel):
     args: List[str] = Field(
         default_factory=list, description="Arguments for stdio command"
     )
+    env: Optional[Dict[str, str]] = Field(
+        default=None, description="Environment variables for stdio command"
+    )
+    cwd: Optional[str] = Field(
+        default=None, description="Working directory for stdio command"
+    )
 
 
 class MCPSettings(BaseModel):
@@ -167,11 +173,20 @@ class MCPSettings(BaseModel):
                 servers = {}
 
                 for server_id, server_config in data.get("mcpServers", {}).items():
+                    env = server_config.get("env")
+                    if isinstance(env, dict):
+                        env = {
+                            str(k): str(v)
+                            for k, v in env.items()
+                            if v is not None
+                        }
                     servers[server_id] = MCPServerConfig(
                         type=server_config["type"],
                         url=server_config.get("url"),
                         command=server_config.get("command"),
                         args=server_config.get("args", []),
+                        env=env,
+                        cwd=server_config.get("cwd"),
                     )
                 return servers
         except Exception as e:

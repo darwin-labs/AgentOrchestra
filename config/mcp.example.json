@@ -1,8 +1,22 @@
 {
-    "mcpServers": {
-      "server1": {
-        "type": "sse",
-        "url": "http://localhost:8000/sse"
-      }
+  "mcpServers": {
+    "example_sse": {
+      "type": "sse",
+      "url": "http://localhost:8000/sse"
+    },
+    "gmail": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/gmail-mcp",
+        "run",
+        "gmail",
+        "--creds-file-path",
+        "/absolute/path/to/credentials.json",
+        "--token-path",
+        "/absolute/path/to/tokens.json"
+      ]
     }
+  }
 }

@@ -82,6 +82,8 @@ class Manus(ToolCallAgent):
                             server_id,
                             use_stdio=True,
                             stdio_args=server_config.args,
+                            stdio_env=server_config.env,
+                            stdio_cwd=server_config.cwd,
                         )
                         logger.info(
                             f"Connected to MCP server {server_id} using command {server_config.command}"
@@ -95,11 +97,17 @@ class Manus(ToolCallAgent):
         server_id: str = "",
         use_stdio: bool = False,
         stdio_args: List[str] = None,
+        stdio_env: Optional[Dict[str, str]] = None,
+        stdio_cwd: Optional[str] = None,
     ) -> None:
         """Connect to an MCP server and add its tools."""
         if use_stdio:
             await self.mcp_clients.connect_stdio(
-                server_url, stdio_args or [], server_id
+                server_url,
+                stdio_args or [],
+                server_id,
+                env=stdio_env,
+                cwd=stdio_cwd,
             )
             self.connected_servers[server_id or server_url] = server_url
         else:

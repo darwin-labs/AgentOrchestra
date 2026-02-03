@@ -131,6 +131,33 @@ For MCP tool version, you can run:
 python run_mcp.py
 ```
 
+### MCP Servers (Gmail example)
+
+OpenManus loads MCP server connections from `config/mcp.json`. You can copy `config/mcp.example.json` and edit it to add servers. The Gmail MCP server can be run via `uv` with a repo path and OAuth credential/token files, as shown below:
+
+```json
+{
+  "mcpServers": {
+    "gmail": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/gmail-mcp",
+        "run",
+        "gmail",
+        "--creds-file-path",
+        "/absolute/path/to/credentials.json",
+        "--token-path",
+        "/absolute/path/to/tokens.json"
+      ]
+    }
+  }
+}
+```
+
+For stdio servers, you can also add `env` (object of key/value pairs) and `cwd` (working directory) when the server needs environment variables or a specific launch directory.
+
 For unstable multi-agent version, you also can run:
 
 ```bash
