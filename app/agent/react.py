@@ -38,6 +38,8 @@ class ReActAgent(BaseAgent, ABC):
         """Execute a single step: think and act."""
         should_act = await self.think()
         if not should_act:
+            # No action needed; finish to avoid looping until max_steps.
+            self.state = AgentState.FINISHED
             return "Thinking complete - no action needed"
         return await self.act()
 
@@ -126,6 +128,10 @@ class ReActAgent(BaseAgent, ABC):
 
                     # Yield observation/result
                     yield f"Observation: {step_result}"
+
+                    # If an action completed the task, stop immediately.
+                    if self.state == AgentState.FINISHED:
+                        break
 
                     # Flush log buffer for this step
                     if log_buffer:

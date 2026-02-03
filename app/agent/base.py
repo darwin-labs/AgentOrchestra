@@ -142,7 +142,8 @@ class BaseAgent(BaseModel, ABC):
     def _latest_user_request_text(self) -> str:
         """Fetch the most recent user message text from memory."""
         for msg in reversed(self.memory.messages):
-            if str(msg.role).lower() == "user":
+            role_value = getattr(msg.role, "value", msg.role)
+            if str(role_value).lower() == "user":
                 text = self._extract_text(msg.content)
                 if text:
                     return text
