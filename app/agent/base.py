@@ -39,6 +39,7 @@ class BaseAgent(BaseModel, ABC):
     # Execution control
     max_steps: int = Field(default=10, description="Maximum steps before termination")
     current_step: int = Field(default=0, description="Current step in execution")
+    min_steps: int = Field(default=1, description="Minimum steps for auto sizing")
 
     duplicate_threshold: int = 2
     auto_max_steps: bool = True
@@ -251,8 +252,9 @@ class BaseAgent(BaseModel, ABC):
             return self.max_steps
 
         text = request.lower()
+        min_steps = max(1, self.min_steps)
         length_bonus = max(0, min(len(text) // 400, 6))
-        base = 6 + length_bonus
+        base = min_steps + length_bonus
 
         keyword_weights = {
             "analyze": 2,
@@ -293,7 +295,7 @@ class BaseAgent(BaseModel, ABC):
                 score += 1
 
         steps = base + min(score, 20)
-        return min(max(steps, 6), self.max_steps_cap)
+        return min(max(steps, min_steps), self.max_steps_cap)
 
     def handle_stuck_state(self):
         """Handle stuck state by adding a prompt to change strategy"""
