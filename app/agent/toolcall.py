@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Any, List, Optional, Union
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 
 from app.agent.react import ReActAgent
 from app.exceptions import TokenLimitExceeded
@@ -31,9 +31,9 @@ class ToolCallAgent(ReActAgent):
     special_tool_names: List[str] = Field(default_factory=lambda: [Terminate().name])
 
     tool_calls: List[ToolCall] = Field(default_factory=list)
-    _current_base64_image: Optional[str] = None
-    _current_file_payload: Optional[dict] = None
-    _last_tool_events: List[dict] = Field(default_factory=list)
+    _current_base64_image: Optional[str] = PrivateAttr(default=None)
+    _current_file_payload: Optional[dict] = PrivateAttr(default=None)
+    _last_tool_events: List[dict] = PrivateAttr(default_factory=list)
 
     max_steps: int = 30
     max_observe: Optional[Union[int, bool]] = None
