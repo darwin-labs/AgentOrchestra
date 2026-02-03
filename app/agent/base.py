@@ -115,6 +115,39 @@ class BaseAgent(BaseModel, ABC):
         kwargs = {"base64_image": base64_image, **(kwargs if role == "tool" else {})}
         self.memory.add_message(message_map[role](content, **kwargs))
 
+    @staticmethod
+    def _extract_text(content: Union[str, List[Any], None]) -> str:
+        """Extract plain text from message content."""
+        if not content:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: List[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                    continue
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                        continue
+                    input_text = part.get("input_text")
+                    if isinstance(input_text, str):
+                        parts.append(input_text)
+            return " ".join(p for p in parts if p).strip()
+        return ""
+
+    def _latest_user_request_text(self) -> str:
+        """Fetch the most recent user message text from memory."""
+        for msg in reversed(self.memory.messages):
+            if str(msg.role).lower() == "user":
+                text = self._extract_text(msg.content)
+                if text:
+                    return text
+        return ""
+
     async def run(self, request: Optional[str] = None) -> str:
         """Execute the agent's main loop asynchronously.
 
@@ -133,8 +166,10 @@ class BaseAgent(BaseModel, ABC):
         if request:
             self.update_memory("user", request)
 
-        if self.auto_max_steps and request:
-            self.max_steps = self._compute_max_steps(request)
+        if self.auto_max_steps:
+            request_text = request or self._latest_user_request_text()
+            if request_text:
+                self.max_steps = self._compute_max_steps(request_text)
 
         results: List[str] = []
         async with self.state_context(AgentState.RUNNING):
@@ -176,8 +211,10 @@ class BaseAgent(BaseModel, ABC):
         if request:
             self.update_memory("user", request)
 
-        if self.auto_max_steps and request:
-            self.max_steps = self._compute_max_steps(request)
+        if self.auto_max_steps:
+            request_text = request or self._latest_user_request_text()
+            if request_text:
+                self.max_steps = self._compute_max_steps(request_text)
 
         async with self.state_context(AgentState.RUNNING):
             while (

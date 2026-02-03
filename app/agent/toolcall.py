@@ -137,6 +137,7 @@ class ToolCallAgent(ReActAgent):
                 raise ValueError(TOOL_CALL_REQUIRED)
 
             # Return last message content if no tool calls
+            self.state = AgentState.FINISHED
             return self.messages[-1].content or "No content or commands to execute"
 
         results = []

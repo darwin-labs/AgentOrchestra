@@ -383,6 +383,7 @@ class ChatApp:
         # Input Area
         input_frame = tk.Frame(left_frame, bg=THEME["bg"])
         input_frame.pack(fill="x", padx=0, pady=10)
+        input_frame.grid_columnconfigure(0, weight=1)
 
         self.input_text = tk.Text(
             input_frame,
@@ -395,7 +396,7 @@ class ChatApp:
             font=self.font_body,
             insertbackground=THEME["ink"],
         )
-        self.input_text.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.input_text.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.input_text.bind("<Return>", self.handle_return)
 
         self.send_button = tk.Button(
@@ -409,7 +410,7 @@ class ChatApp:
             pady=6,
             font=self.font_small_bold,
         )
-        self.send_button.pack(side="right")
+        self.send_button.grid(row=0, column=1, sticky="e")
 
         # Right Panel: Steps & Final Response
         notebook = ttk.Notebook(right_frame)

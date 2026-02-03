@@ -52,6 +52,11 @@ class ReActAgent(BaseAgent, ABC):
         if request:
             self.update_memory("user", request)
 
+        if self.auto_max_steps:
+            request_text = request or self._latest_user_request_text()
+            if request_text:
+                self.max_steps = self._compute_max_steps(request_text)
+
         log_buffer: List[object] = []
 
         def _log_sink(msg):
