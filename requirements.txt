@@ -43,3 +43,5 @@ huggingface-hub~=0.29.2
 setuptools~=75.8.0
 daytona
 groq
+pandas
+aiohttp
