@@ -39,7 +39,6 @@ class BaseAgent(BaseModel, ABC):
     # Execution control
     max_steps: int = Field(default=10, description="Maximum steps before termination")
     current_step: int = Field(default=0, description="Current step in execution")
-    min_steps: int = Field(default=1, description="Minimum steps for auto sizing")
 
     duplicate_threshold: int = 2
     auto_max_steps: bool = True
@@ -247,55 +246,8 @@ class BaseAgent(BaseModel, ABC):
         """
 
     def _compute_max_steps(self, request: str) -> int:
-        """Heuristic to scale max_steps based on task complexity."""
-        if not request:
-            return self.max_steps
-
-        text = request.lower()
-        min_steps = max(1, self.min_steps)
-        length_bonus = max(0, min(len(text) // 400, 6))
-        base = min_steps + length_bonus
-
-        keyword_weights = {
-            "analyze": 2,
-            "research": 2,
-            "compare": 2,
-            "summarize": 1,
-            "plan": 2,
-            "multi": 2,
-            "multiple": 2,
-            "several": 2,
-            "all": 3,
-            "each": 3,
-            "every": 3,
-            "list": 2,
-            "steps": 2,
-            "run": 2,
-            "build": 3,
-            "generate": 2,
-            "search": 2,
-            "browser": 2,
-            "website": 2,
-            "web": 2,
-            "crawl": 3,
-            "dataset": 3,
-            "files": 2,
-            "report": 2,
-            "code": 2,
-            "refactor": 3,
-        }
-
-        score = 0
-        for word, weight in keyword_weights.items():
-            if word in text:
-                score += weight
-
-        for ch in text:
-            if ch.isdigit():
-                score += 1
-
-        steps = base + min(score, 20)
-        return min(max(steps, min_steps), self.max_steps_cap)
+        """Return the configured max_steps without prompt-based heuristics."""
+        return min(self.max_steps, self.max_steps_cap)
 
     def handle_stuck_state(self):
         """Handle stuck state by adding a prompt to change strategy"""
