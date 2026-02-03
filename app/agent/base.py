@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
+import re
 from typing import Any, AsyncIterator, List, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
@@ -42,7 +43,10 @@ class BaseAgent(BaseModel, ABC):
 
     duplicate_threshold: int = 2
     auto_max_steps: bool = True
+    auto_extend_steps: bool = True
     max_steps_cap: int = 40
+    step_extension_ratio: float = 0.25
+    step_extension_min: int = 2
 
     class Config:
         arbitrary_types_allowed = True
@@ -174,9 +178,15 @@ class BaseAgent(BaseModel, ABC):
 
         results: List[str] = []
         async with self.state_context(AgentState.RUNNING):
-            while (
-                self.current_step < self.max_steps and self.state != AgentState.FINISHED
-            ):
+            while self.state != AgentState.FINISHED:
+                if self.current_step >= self.max_steps:
+                    if self._maybe_extend_max_steps():
+                        continue
+                    self.current_step = 0
+                    self.state = AgentState.IDLE
+                    results.append(f"Terminated: Reached max steps ({self.max_steps})")
+                    break
+
                 self.current_step += 1
                 logger.info(f"Executing step {self.current_step}/{self.max_steps}")
                 step_result = await self.step()
@@ -186,11 +196,6 @@ class BaseAgent(BaseModel, ABC):
                     self.handle_stuck_state()
 
                 results.append(f"Step {self.current_step}: {step_result}")
-
-            if self.current_step >= self.max_steps:
-                self.current_step = 0
-                self.state = AgentState.IDLE
-                results.append(f"Terminated: Reached max steps ({self.max_steps})")
         await SANDBOX_CLIENT.cleanup()
         return "\n".join(results) if results else "No steps executed"
 
@@ -218,9 +223,15 @@ class BaseAgent(BaseModel, ABC):
                 self.max_steps = self._compute_max_steps(request_text)
 
         async with self.state_context(AgentState.RUNNING):
-            while (
-                self.current_step < self.max_steps and self.state != AgentState.FINISHED
-            ):
+            while self.state != AgentState.FINISHED:
+                if self.current_step >= self.max_steps:
+                    if self._maybe_extend_max_steps():
+                        continue
+                    self.current_step = 0
+                    self.state = AgentState.IDLE
+                    yield f"Terminated: Reached max steps ({self.max_steps})"
+                    break
+
                 self.current_step += 1
                 logger.info(f"Executing step {self.current_step}/{self.max_steps}")
                 step_result = await self.step()
@@ -230,11 +241,6 @@ class BaseAgent(BaseModel, ABC):
                     self.handle_stuck_state()
 
                 yield f"Step {self.current_step}: {step_result}"
-
-            if self.current_step >= self.max_steps:
-                self.current_step = 0
-                self.state = AgentState.IDLE
-                yield f"Terminated: Reached max steps ({self.max_steps})"
 
         await SANDBOX_CLIENT.cleanup()
 
@@ -246,8 +252,43 @@ class BaseAgent(BaseModel, ABC):
         """
 
     def _compute_max_steps(self, request: str) -> int:
-        """Return the configured max_steps without prompt-based heuristics."""
-        return min(self.max_steps, self.max_steps_cap)
+        """Estimate max steps from the request with a configurable cap."""
+        request_text = request or ""
+        word_count = len(re.findall(r"\w+", request_text))
+        bullet_count = sum(
+            1
+            for line in request_text.splitlines()
+            if re.match(r"\s*(?:[-*•]|\d+[.)])\s+", line)
+        )
+        sentence_count = len(re.findall(r"[.!?](?:\s|$)", request_text))
+        if word_count and sentence_count == 0:
+            sentence_count = 1
+
+        estimated = (
+            4
+            + (word_count // 25)
+            + (bullet_count * 2)
+            + (sentence_count // 3)
+        )
+        estimated = max(4, estimated)
+
+        return min(self.max_steps_cap, max(self.max_steps, estimated))
+
+    def _maybe_extend_max_steps(self) -> bool:
+        """Extend max_steps if allowed and below the hard cap."""
+        if not (self.auto_max_steps and self.auto_extend_steps):
+            return False
+        if self.max_steps >= self.max_steps_cap:
+            return False
+        extension = max(
+            self.step_extension_min, int(self.max_steps * self.step_extension_ratio)
+        )
+        new_max = min(self.max_steps_cap, self.max_steps + extension)
+        if new_max <= self.max_steps:
+            return False
+        self.max_steps = new_max
+        logger.info(f"Extended max_steps to {self.max_steps}")
+        return True
 
     def handle_stuck_state(self):
         """Handle stuck state by adding a prompt to change strategy"""

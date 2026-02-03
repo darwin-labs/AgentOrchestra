@@ -68,10 +68,15 @@ class ReActAgent(BaseAgent, ABC):
 
         async with self.state_context(AgentState.RUNNING):
             try:
-                while (
-                    self.current_step < self.max_steps
-                    and self.state != AgentState.FINISHED
-                ):
+                while self.state != AgentState.FINISHED:
+                    if self.current_step >= self.max_steps:
+                        if self._maybe_extend_max_steps():
+                            continue
+                        self.current_step = 0
+                        self.state = AgentState.IDLE
+                        yield f"Terminated: Reached max steps ({self.max_steps})"
+                        break
+
                     self.current_step += 1
                     logger.info(
                         f"Executing step {self.current_step}/{self.max_steps}"
@@ -148,10 +153,6 @@ class ReActAgent(BaseAgent, ABC):
                     if self.is_stuck():
                         self.handle_stuck_state()
 
-                if self.current_step >= self.max_steps:
-                    self.current_step = 0
-                    self.state = AgentState.IDLE
-                    yield f"Terminated: Reached max steps ({self.max_steps})"
             finally:
                 logger.remove(log_sink_id)
 
