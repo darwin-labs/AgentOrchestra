@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import json
+from typing import List
 from typing import AsyncIterator, Optional
 
 from pydantic import Field
@@ -51,68 +52,93 @@ class ReActAgent(BaseAgent, ABC):
         if request:
             self.update_memory("user", request)
 
+        log_buffer: List[object] = []
+
+        def _log_sink(msg):
+            log_buffer.append(msg)
+
+        log_sink_id = logger.add(_log_sink)
+
         async with self.state_context(AgentState.RUNNING):
-            while (
-                self.current_step < self.max_steps and self.state != AgentState.FINISHED
-            ):
-                self.current_step += 1
-                logger.info(f"Executing step {self.current_step}/{self.max_steps}")
-
-                # THINK
-                should_act = await self.think()
-
-                # Yield thought if available
-                if (
-                    self.memory.messages
-                    and self.memory.messages[-1].role == "assistant"
+            try:
+                while (
+                    self.current_step < self.max_steps
+                    and self.state != AgentState.FINISHED
                 ):
-                    thought_content = self.memory.messages[-1].content
-                    if thought_content:
-                        yield f"Thought: {thought_content}"
+                    self.current_step += 1
+                    logger.info(
+                        f"Executing step {self.current_step}/{self.max_steps}"
+                    )
+                    yield f"Step: {self.current_step}/{self.max_steps}"
 
-                if not should_act:
-                    yield "Thinking complete - no action needed"
-                    break
+                    # THINK
+                    should_act = await self.think()
 
-                # ACT
-                # Yield action execution status
-                # (Optional: In the future, we could yield individual tool calls here if available in memory)
+                    # Yield thought if available
+                    if (
+                        self.memory.messages
+                        and self.memory.messages[-1].role == "assistant"
+                    ):
+                        thought_content = self.memory.messages[-1].content
+                        if thought_content:
+                            yield f"Thought: {thought_content}"
 
-                step_result = await self.act()
+                    if not should_act:
+                        yield "Thinking complete - no action needed"
+                        break
 
-                tool_events = getattr(self, "_last_tool_events", None) or []
-                browser_snapshot_emitted = False
-                for event in tool_events:
-                    if event.get("name") == "browser_use":
-                        args = event.get("arguments") or {}
-                        action = args.get("action")
-                        action_payload = {
-                            "action": action,
-                            "args": args,
-                        }
-                        yield f"BrowserAction: {json.dumps(action_payload, ensure_ascii=False)}"
-                        if event.get("base64_image"):
-                            browser_snapshot_emitted = True
-                            yield f"BrowserSnapshot: {event['base64_image']}"
+                    # ACT
+                    # Yield action execution status
+                    # (Optional: In the future, we could yield individual tool calls here if available in memory)
 
-                # Yield snapshot if available from tool execution
-                if (
-                    hasattr(self, "_current_base64_image")
-                    and self._current_base64_image
-                    and not browser_snapshot_emitted
-                ):
-                    yield f"Snapshot: {self._current_base64_image}"
+                    step_result = await self.act()
 
-                # Yield observation/result
-                yield f"Observation: {step_result}"
+                    tool_events = getattr(self, "_last_tool_events", None) or []
+                    browser_snapshot_emitted = False
+                    for event in tool_events:
+                        if event.get("name") == "browser_use":
+                            args = event.get("arguments") or {}
+                            action = args.get("action")
+                            action_payload = {
+                                "action": action,
+                                "args": args,
+                            }
+                            yield f"BrowserAction: {json.dumps(action_payload, ensure_ascii=False)}"
+                            if event.get("base64_image"):
+                                browser_snapshot_emitted = True
+                                yield f"BrowserSnapshot: {event['base64_image']}"
 
-                # Check for stuck state
-                if self.is_stuck():
-                    self.handle_stuck_state()
+                    # Yield snapshot if available from tool execution
+                    if (
+                        hasattr(self, "_current_base64_image")
+                        and self._current_base64_image
+                        and not browser_snapshot_emitted
+                    ):
+                        yield f"Snapshot: {self._current_base64_image}"
 
-            if self.current_step >= self.max_steps:
-                self.current_step = 0
-                self.state = AgentState.IDLE
-                yield f"Terminated: Reached max steps ({self.max_steps})"
+                    # Yield observation/result
+                    yield f"Observation: {step_result}"
+
+                    # Flush log buffer for this step
+                    if log_buffer:
+                        for entry in log_buffer:
+                            try:
+                                level = entry.record["level"].name
+                                message = entry.record["message"]
+                                yield f"Log: [{level}] {message}"
+                            except Exception:
+                                yield f"Log: {str(entry)}"
+                        log_buffer.clear()
+
+                    # Check for stuck state
+                    if self.is_stuck():
+                        self.handle_stuck_state()
+
+                if self.current_step >= self.max_steps:
+                    self.current_step = 0
+                    self.state = AgentState.IDLE
+                    yield f"Terminated: Reached max steps ({self.max_steps})"
+            finally:
+                logger.remove(log_sink_id)
 
         await SANDBOX_CLIENT.cleanup()

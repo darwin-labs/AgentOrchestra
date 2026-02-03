@@ -198,6 +198,9 @@ class ChatApp:
         display_text = f"Browser action: {action} | args: {args}"
         self.append_message("system", display_text)
 
+    def display_log(self, log_text):
+        self.append_message("system", log_text)
+
     def display_image(self, base64_str):
         try:
             image_data = base64.b64decode(base64_str)
@@ -292,6 +295,20 @@ class ChatApp:
                                                 0,
                                                 lambda p=payload: self.display_browser_action(
                                                     p
+                                                ),
+                                            )
+                                        elif content.startswith("Step: "):
+                                            self.root.after(
+                                                0,
+                                                lambda t=content.strip(): self.display_log(
+                                                    t
+                                                ),
+                                            )
+                                        elif content.startswith("Log: "):
+                                            self.root.after(
+                                                0,
+                                                lambda t=content.strip(): self.display_log(
+                                                    t
                                                 ),
                                             )
                                         elif content.startswith("Snapshot: "):
