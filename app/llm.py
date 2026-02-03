@@ -39,6 +39,7 @@ MULTIMODAL_MODELS = [
     "claude-3-opus-20240229",
     "claude-3-sonnet-20240229",
     "claude-3-haiku-20240307",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
 ]
 
 

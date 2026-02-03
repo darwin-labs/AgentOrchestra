@@ -55,7 +55,7 @@ class Message(BaseModel):
     """Represents a chat message in the conversation"""
 
     role: ROLE_TYPE = Field(...)  # type: ignore
-    content: Optional[str] = Field(default=None)
+    content: Optional[Union[str, List[Any]]] = Field(default=None)
     tool_calls: Optional[List[ToolCall]] = Field(default=None)
     name: Optional[str] = Field(default=None)
     tool_call_id: Optional[str] = Field(default=None)
@@ -98,7 +98,7 @@ class Message(BaseModel):
 
     @classmethod
     def user_message(
-        cls, content: str, base64_image: Optional[str] = None
+        cls, content: Union[str, List[Any]], base64_image: Optional[str] = None
     ) -> "Message":
         """Create a user message"""
         return cls(role=Role.USER, content=content, base64_image=base64_image)
@@ -110,7 +110,9 @@ class Message(BaseModel):
 
     @classmethod
     def assistant_message(
-        cls, content: Optional[str] = None, base64_image: Optional[str] = None
+        cls,
+        content: Optional[Union[str, List[Any]]] = None,
+        base64_image: Optional[str] = None,
     ) -> "Message":
         """Create an assistant message"""
         return cls(role=Role.ASSISTANT, content=content, base64_image=base64_image)

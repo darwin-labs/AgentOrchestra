@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, List, Optional, Union
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -84,7 +84,7 @@ class BaseAgent(BaseModel, ABC):
     def update_memory(
         self,
         role: ROLE_TYPE,  # type: ignore
-        content: str,
+        content: Union[str, List[Any]],
         base64_image: Optional[str] = None,
         **kwargs,
     ) -> None:
