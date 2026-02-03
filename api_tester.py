@@ -192,6 +192,12 @@ class ChatApp:
         self.chat_display.see(tk.END)
         self.chat_display.config(state="disabled")
 
+    def display_browser_action(self, action_payload):
+        action = action_payload.get("action") or "unknown"
+        args = action_payload.get("args") or {}
+        display_text = f"Browser action: {action} | args: {args}"
+        self.append_message("system", display_text)
+
     def display_image(self, base64_str):
         try:
             image_data = base64.b64decode(base64_str)
@@ -264,7 +270,31 @@ class ChatApp:
                                     delta = data["choices"][0]["delta"]
                                     if "content" in delta and delta["content"]:
                                         content = delta["content"]
-                                        if content.startswith("Snapshot: "):
+                                        if content.startswith("BrowserSnapshot: "):
+                                            base64_img = content.replace(
+                                                "BrowserSnapshot: ", ""
+                                            ).strip()
+                                            self.root.after(
+                                                0,
+                                                lambda img=base64_img: self.display_image(
+                                                    img
+                                                ),
+                                            )
+                                        elif content.startswith("BrowserAction: "):
+                                            payload_str = content.replace(
+                                                "BrowserAction: ", ""
+                                            ).strip()
+                                            try:
+                                                payload = json.loads(payload_str)
+                                            except json.JSONDecodeError:
+                                                payload = {"action": "unknown", "args": {}}
+                                            self.root.after(
+                                                0,
+                                                lambda p=payload: self.display_browser_action(
+                                                    p
+                                                ),
+                                            )
+                                        elif content.startswith("Snapshot: "):
                                             base64_img = content.replace(
                                                 "Snapshot: ", ""
                                             ).strip()

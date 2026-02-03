@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import json
 from typing import AsyncIterator, Optional
 
 from pydantic import Field
@@ -79,10 +80,26 @@ class ReActAgent(BaseAgent, ABC):
 
                 step_result = await self.act()
 
+                tool_events = getattr(self, "_last_tool_events", None) or []
+                browser_snapshot_emitted = False
+                for event in tool_events:
+                    if event.get("name") == "browser_use":
+                        args = event.get("arguments") or {}
+                        action = args.get("action")
+                        action_payload = {
+                            "action": action,
+                            "args": args,
+                        }
+                        yield f"BrowserAction: {json.dumps(action_payload, ensure_ascii=False)}"
+                        if event.get("base64_image"):
+                            browser_snapshot_emitted = True
+                            yield f"BrowserSnapshot: {event['base64_image']}"
+
                 # Yield snapshot if available from tool execution
                 if (
                     hasattr(self, "_current_base64_image")
                     and self._current_base64_image
+                    and not browser_snapshot_emitted
                 ):
                     yield f"Snapshot: {self._current_base64_image}"
 

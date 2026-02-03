@@ -32,6 +32,7 @@ class ToolCallAgent(ReActAgent):
 
     tool_calls: List[ToolCall] = Field(default_factory=list)
     _current_base64_image: Optional[str] = None
+    _last_tool_events: List[dict] = Field(default_factory=list)
 
     max_steps: int = 30
     max_observe: Optional[Union[int, bool]] = None
@@ -138,9 +139,16 @@ class ToolCallAgent(ReActAgent):
             return self.messages[-1].content or "No content or commands to execute"
 
         results = []
+        self._last_tool_events = []
         for command in self.tool_calls:
             # Reset base64_image for each tool call
             self._current_base64_image = None
+
+            parsed_args = {}
+            try:
+                parsed_args = json.loads(command.function.arguments or "{}")
+            except json.JSONDecodeError:
+                parsed_args = {"_raw": command.function.arguments or ""}
 
             result = await self.execute_tool(command)
 
@@ -160,6 +168,14 @@ class ToolCallAgent(ReActAgent):
             )
             self.memory.add_message(tool_msg)
             results.append(result)
+            self._last_tool_events.append(
+                {
+                    "name": command.function.name,
+                    "arguments": parsed_args,
+                    "result": result,
+                    "base64_image": self._current_base64_image,
+                }
+            )
 
         return "\n\n".join(results)
 
