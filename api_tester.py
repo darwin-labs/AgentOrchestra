@@ -1,4 +1,5 @@
 import base64
+import io
 import json
 import os
 import threading
@@ -6,6 +7,7 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
+from PIL import Image, ImageTk
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "api_tester_config.json")
@@ -464,8 +466,19 @@ class ChatApp:
 
     def display_image(self, base64_str):
         try:
-            image_data = base64.b64decode(base64_str)
-            img = tk.PhotoImage(data=image_data)
+            cleaned = base64_str.strip()
+            if cleaned.startswith("data:"):
+                cleaned = cleaned.split(",", 1)[1].strip()
+            image_data = base64.b64decode(cleaned)
+            image = Image.open(io.BytesIO(image_data))
+            max_width = self.steps_display.winfo_width() - 40
+            if max_width < 200:
+                max_width = 420
+            if image.width > max_width:
+                ratio = max_width / image.width
+                new_size = (int(image.width * ratio), int(image.height * ratio))
+                image = image.resize(new_size, Image.LANCZOS)
+            img = ImageTk.PhotoImage(image)
             self.steps_display.config(state="normal")
             self.steps_display.image_create(tk.END, image=img)
             self.steps_display.insert(tk.END, "\n", "step")

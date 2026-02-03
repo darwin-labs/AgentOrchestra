@@ -41,6 +41,8 @@ class BaseAgent(BaseModel, ABC):
     current_step: int = Field(default=0, description="Current step in execution")
 
     duplicate_threshold: int = 2
+    auto_max_steps: bool = True
+    max_steps_cap: int = 40
 
     class Config:
         arbitrary_types_allowed = True
@@ -131,6 +133,9 @@ class BaseAgent(BaseModel, ABC):
         if request:
             self.update_memory("user", request)
 
+        if self.auto_max_steps and request:
+            self.max_steps = self._compute_max_steps(request)
+
         results: List[str] = []
         async with self.state_context(AgentState.RUNNING):
             while (
@@ -171,6 +176,9 @@ class BaseAgent(BaseModel, ABC):
         if request:
             self.update_memory("user", request)
 
+        if self.auto_max_steps and request:
+            self.max_steps = self._compute_max_steps(request)
+
         async with self.state_context(AgentState.RUNNING):
             while (
                 self.current_step < self.max_steps and self.state != AgentState.FINISHED
@@ -198,6 +206,56 @@ class BaseAgent(BaseModel, ABC):
 
         Must be implemented by subclasses to define specific behavior.
         """
+
+    def _compute_max_steps(self, request: str) -> int:
+        """Heuristic to scale max_steps based on task complexity."""
+        if not request:
+            return self.max_steps
+
+        text = request.lower()
+        length_bonus = max(0, min(len(text) // 400, 6))
+        base = 6 + length_bonus
+
+        keyword_weights = {
+            "analyze": 2,
+            "research": 2,
+            "compare": 2,
+            "summarize": 1,
+            "plan": 2,
+            "multi": 2,
+            "multiple": 2,
+            "several": 2,
+            "all": 3,
+            "each": 3,
+            "every": 3,
+            "list": 2,
+            "steps": 2,
+            "run": 2,
+            "build": 3,
+            "generate": 2,
+            "search": 2,
+            "browser": 2,
+            "website": 2,
+            "web": 2,
+            "crawl": 3,
+            "dataset": 3,
+            "files": 2,
+            "report": 2,
+            "code": 2,
+            "refactor": 3,
+        }
+
+        score = 0
+        for word, weight in keyword_weights.items():
+            if word in text:
+                score += weight
+
+        for ch in text:
+            if ch.isdigit():
+                score += 1
+
+        steps = base + min(score, 20)
+        return min(max(steps, 6), self.max_steps_cap)
 
     def handle_stuck_state(self):
         """Handle stuck state by adding a prompt to change strategy"""

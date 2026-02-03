@@ -187,6 +187,30 @@ class BrowserUseTool(BaseTool, Generic[Context]):
 
         return self.context
 
+    async def _capture_snapshot(self, context: BrowserContext) -> Optional[str]:
+        """Capture a base64-encoded screenshot of the current page."""
+        try:
+            page = await context.get_current_page()
+            await page.bring_to_front()
+            await page.wait_for_load_state()
+            screenshot = await page.screenshot(
+                full_page=True, animations="disabled", type="jpeg", quality=100
+            )
+            return base64.b64encode(screenshot).decode("utf-8")
+        except Exception:
+            return None
+
+    async def _attach_snapshot(
+        self, result: ToolResult, context: BrowserContext
+    ) -> ToolResult:
+        """Attach a snapshot to a ToolResult when possible."""
+        if result.error:
+            return result
+        snapshot = await self._capture_snapshot(context)
+        if snapshot:
+            result.base64_image = snapshot
+        return result
+
     async def execute(
         self,
         action: str,
@@ -238,15 +262,21 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     page = await context.get_current_page()
                     await page.goto(url)
                     await page.wait_for_load_state()
-                    return ToolResult(output=f"Navigated to {url}")
+                    return await self._attach_snapshot(
+                        ToolResult(output=f"Navigated to {url}"), context
+                    )
 
                 elif action == "go_back":
                     await context.go_back()
-                    return ToolResult(output="Navigated back")
+                    return await self._attach_snapshot(
+                        ToolResult(output="Navigated back"), context
+                    )
 
                 elif action == "refresh":
                     await context.refresh_page()
-                    return ToolResult(output="Refreshed current page")
+                    return await self._attach_snapshot(
+                        ToolResult(output="Refreshed current page"), context
+                    )
 
                 elif action == "web_search":
                     if not query:
@@ -265,7 +295,7 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     await page.goto(url_to_navigate)
                     await page.wait_for_load_state()
 
-                    return search_response
+                    return await self._attach_snapshot(search_response, context)
 
                 # Element interaction actions
                 elif action == "click_element":
@@ -280,7 +310,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     output = f"Clicked element at index {index}"
                     if download_path:
                         output += f" - Downloaded file to {download_path}"
-                    return ToolResult(output=output)
+                    return await self._attach_snapshot(
+                        ToolResult(output=output), context
+                    )
 
                 elif action == "input_text":
                     if index is None or not text:
@@ -291,8 +323,11 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     if not element:
                         return ToolResult(error=f"Element with index {index} not found")
                     await context._input_text_element_node(element, text)
-                    return ToolResult(
-                        output=f"Input '{text}' into element at index {index}"
+                    return await self._attach_snapshot(
+                        ToolResult(
+                            output=f"Input '{text}' into element at index {index}"
+                        ),
+                        context,
                     )
 
                 elif action == "scroll_down" or action == "scroll_up":
@@ -305,8 +340,11 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     await context.execute_javascript(
                         f"window.scrollBy(0, {direction * amount});"
                     )
-                    return ToolResult(
-                        output=f"Scrolled {'down' if direction > 0 else 'up'} by {amount} pixels"
+                    return await self._attach_snapshot(
+                        ToolResult(
+                            output=f"Scrolled {'down' if direction > 0 else 'up'} by {amount} pixels"
+                        ),
+                        context,
                     )
 
                 elif action == "scroll_to_text":
@@ -318,7 +356,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     try:
                         locator = page.get_by_text(text, exact=False)
                         await locator.scroll_into_view_if_needed()
-                        return ToolResult(output=f"Scrolled to text: '{text}'")
+                        return await self._attach_snapshot(
+                            ToolResult(output=f"Scrolled to text: '{text}'"), context
+                        )
                     except Exception as e:
                         return ToolResult(error=f"Failed to scroll to text: {str(e)}")
 
@@ -329,7 +369,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                         )
                     page = await context.get_current_page()
                     await page.keyboard.press(keys)
-                    return ToolResult(output=f"Sent keys: {keys}")
+                    return await self._attach_snapshot(
+                        ToolResult(output=f"Sent keys: {keys}"), context
+                    )
 
                 elif action == "get_dropdown_options":
                     if index is None:
@@ -355,7 +397,9 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                     """,
                         element.xpath,
                     )
-                    return ToolResult(output=f"Dropdown options: {options}")
+                    return await self._attach_snapshot(
+                        ToolResult(output=f"Dropdown options: {options}"), context
+                    )
 
                 elif action == "select_dropdown_option":
                     if index is None or not text:
@@ -367,8 +411,11 @@ class BrowserUseTool(BaseTool, Generic[Context]):
                         return ToolResult(error=f"Element with index {index} not found")
                     page = await context.get_current_page()
                     await page.select_option(element.xpath, label=text)
-                    return ToolResult(
-                        output=f"Selected option '{text}' from dropdown at index {index}"
+                    return await self._attach_snapshot(
+                        ToolResult(
+                            output=f"Selected option '{text}' from dropdown at index {index}"
+                        ),
+                        context,
                     )
 
                 # Content extraction actions
@@ -437,11 +484,17 @@ Page content:
                     if response and response.tool_calls:
                         args = json.loads(response.tool_calls[0].function.arguments)
                         extracted_content = args.get("extracted_content", {})
-                        return ToolResult(
-                            output=f"Extracted from page:\n{extracted_content}\n"
+                        return await self._attach_snapshot(
+                            ToolResult(
+                                output=f"Extracted from page:\n{extracted_content}\n"
+                            ),
+                            context,
                         )
 
-                    return ToolResult(output="No content was extracted from the page.")
+                    return await self._attach_snapshot(
+                        ToolResult(output="No content was extracted from the page."),
+                        context,
+                    )
 
                 # Tab management actions
                 elif action == "switch_tab":
@@ -452,23 +505,32 @@ Page content:
                     await context.switch_to_tab(tab_id)
                     page = await context.get_current_page()
                     await page.wait_for_load_state()
-                    return ToolResult(output=f"Switched to tab {tab_id}")
+                    return await self._attach_snapshot(
+                        ToolResult(output=f"Switched to tab {tab_id}"), context
+                    )
 
                 elif action == "open_tab":
                     if not url:
                         return ToolResult(error="URL is required for 'open_tab' action")
                     await context.create_new_tab(url)
-                    return ToolResult(output=f"Opened new tab with {url}")
+                    return await self._attach_snapshot(
+                        ToolResult(output=f"Opened new tab with {url}"), context
+                    )
 
                 elif action == "close_tab":
                     await context.close_current_tab()
-                    return ToolResult(output="Closed current tab")
+                    return await self._attach_snapshot(
+                        ToolResult(output="Closed current tab"), context
+                    )
 
                 # Utility actions
                 elif action == "wait":
                     seconds_to_wait = seconds if seconds is not None else 3
                     await asyncio.sleep(seconds_to_wait)
-                    return ToolResult(output=f"Waited for {seconds_to_wait} seconds")
+                    return await self._attach_snapshot(
+                        ToolResult(output=f"Waited for {seconds_to_wait} seconds"),
+                        context,
+                    )
 
                 else:
                     return ToolResult(error=f"Unknown action: {action}")
