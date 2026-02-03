@@ -1,13 +1,15 @@
 import base64
 import json
 import os
+import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from app.agent.manus import Manus
 from app.api.auth import require_openai_auth
@@ -27,10 +29,13 @@ from app.api.openai_schemas import (
 )
 from app.config import config
 from app.schema import Message
+from app.sandbox.client import SANDBOX_CLIENT
+from app.utils.files_utils import should_exclude_file
 
 _ATTACHMENT_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 _UPLOAD_DIR = Path(config.workspace_root) / "uploads"
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
+_MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024  # 25MB
 
 router = APIRouter(prefix="/v1")
 
@@ -313,6 +318,158 @@ def _apply_attachment_model_override(
     new_config.llm = new_llm
 
 
+def _clean_rel_path(path: Optional[str]) -> str:
+    rel = (path or "").lstrip("/")
+    parts = Path(rel).parts
+    if any(part == ".." for part in parts):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return rel
+
+
+def _resolve_local_path(rel_path: str) -> Path:
+    root = Path(config.workspace_root).resolve()
+    if not rel_path:
+        return root
+    resolved = (root / rel_path).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid path") from exc
+    return resolved
+
+
+def _rel_from_root(path: Path) -> str:
+    return path.resolve().relative_to(Path(config.workspace_root).resolve()).as_posix()
+
+
+def _entry_dict(path: Path, rel_path: str) -> dict:
+    stat = path.stat()
+    return {
+        "path": rel_path,
+        "is_dir": path.is_dir(),
+        "size": stat.st_size,
+        "modified": stat.st_mtime,
+    }
+
+
+def _list_local_entries(path: Path, recursive: bool) -> list[dict]:
+    root = Path(config.workspace_root).resolve()
+    entries: list[dict] = []
+    if path.is_file():
+        rel_path = _rel_from_root(path)
+        if should_exclude_file(rel_path):
+            return entries
+        return [_entry_dict(path, rel_path)]
+
+    if recursive:
+        for dir_path, dir_names, file_names in os.walk(path):
+            rel_dir = Path(dir_path).resolve().relative_to(root).as_posix()
+            dir_names[:] = [
+                d
+                for d in dir_names
+                if not should_exclude_file(
+                    os.path.join(rel_dir, d) if rel_dir else d
+                )
+            ]
+            for name in dir_names:
+                rel_path = os.path.join(rel_dir, name) if rel_dir else name
+                entry_path = Path(dir_path) / name
+                entries.append(_entry_dict(entry_path, rel_path))
+            for name in file_names:
+                rel_path = os.path.join(rel_dir, name) if rel_dir else name
+                if should_exclude_file(rel_path):
+                    continue
+                entry_path = Path(dir_path) / name
+                entries.append(_entry_dict(entry_path, rel_path))
+    else:
+        for entry in path.iterdir():
+            rel_path = _rel_from_root(entry)
+            if should_exclude_file(rel_path):
+                continue
+            entries.append(_entry_dict(entry, rel_path))
+
+    entries.sort(key=lambda item: (not item["is_dir"], item["path"]))
+    return entries
+
+
+async def _sandbox_stat(path: str) -> dict:
+    if not SANDBOX_CLIENT.sandbox:
+        await SANDBOX_CLIENT.create(config=config.sandbox)
+    script = (
+        "import json, os\n"
+        f"path = {path!r}\n"
+        "if not os.path.exists(path):\n"
+        "    print(json.dumps({'exists': False}))\n"
+        "else:\n"
+        "    st = os.stat(path)\n"
+        "    print(json.dumps({'exists': True, 'is_dir': os.path.isdir(path), 'size': st.st_size, 'modified': st.st_mtime}))\n"
+    )
+    output = await SANDBOX_CLIENT.run_command(f"python -c {script!r}")
+    return json.loads(output.strip() or "{}")
+
+
+async def _list_sandbox_entries(path: str, recursive: bool) -> list[dict]:
+    if not SANDBOX_CLIENT.sandbox:
+        await SANDBOX_CLIENT.create(config=config.sandbox)
+    workspace_root = config.sandbox.work_dir
+    script = (
+        "import json, os\n"
+        f"workspace_root = {workspace_root!r}\n"
+        f"target = {path!r}\n"
+        f"recursive = {str(recursive)}\n"
+        "entries = []\n"
+        "if not os.path.exists(target):\n"
+        "    print(json.dumps({'error': 'not_found'}))\n"
+        "    raise SystemExit(0)\n"
+        "def add_entry(full_path):\n"
+        "    rel = os.path.relpath(full_path, workspace_root)\n"
+        "    st = os.stat(full_path)\n"
+        "    entries.append({'path': rel.replace('\\\\', '/'), 'is_dir': os.path.isdir(full_path), 'size': st.st_size, 'modified': st.st_mtime})\n"
+        "if os.path.isfile(target):\n"
+        "    add_entry(target)\n"
+        "else:\n"
+        "    if recursive:\n"
+        "        for root, dirs, files in os.walk(target):\n"
+        "            for name in dirs:\n"
+        "                add_entry(os.path.join(root, name))\n"
+        "            for name in files:\n"
+        "                add_entry(os.path.join(root, name))\n"
+        "    else:\n"
+        "        for name in os.listdir(target):\n"
+        "            add_entry(os.path.join(target, name))\n"
+        "print(json.dumps({'entries': entries}))\n"
+    )
+    output = await SANDBOX_CLIENT.run_command(f"python -c {script!r}")
+    payload = json.loads(output.strip() or "{}")
+    if payload.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail="Path not found")
+    entries = payload.get("entries", [])
+    filtered = [
+        entry for entry in entries if not should_exclude_file(entry.get("path", ""))
+    ]
+    filtered.sort(key=lambda item: (not item["is_dir"], item["path"]))
+    return filtered
+
+
+async def _sandbox_file_response(path: str, filename: str, size: int):
+    if size > _MAX_DOWNLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File exceeds max download size ({_MAX_DOWNLOAD_BYTES} bytes)",
+        )
+    if not SANDBOX_CLIENT.sandbox:
+        await SANDBOX_CLIENT.create(config=config.sandbox)
+    tmp_file = tempfile.NamedTemporaryFile(delete=False)
+    tmp_file.close()
+    await SANDBOX_CLIENT.copy_from(path, tmp_file.name)
+    return FileResponse(
+        tmp_file.name,
+        filename=filename,
+        media_type="application/octet-stream",
+        background=BackgroundTask(lambda: os.remove(tmp_file.name)),
+    )
+
+
 @router.get("/models", dependencies=[Depends(require_openai_auth)])
 async def list_models() -> ModelListResponse:
     created = _now()
@@ -323,6 +480,58 @@ async def list_models() -> ModelListResponse:
         ModelObject(id=model_id, created=created) for model_id in sorted(model_ids)
     ]
     return ModelListResponse(data=models)
+
+
+@router.get("/workspace/files", dependencies=[Depends(require_openai_auth)])
+async def list_workspace_files(
+    path: Optional[str] = Query(default=None),
+    recursive: bool = Query(default=False),
+):
+    rel_path = _clean_rel_path(path)
+    if rel_path and should_exclude_file(rel_path):
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    if config.sandbox and config.sandbox.use_sandbox:
+        sandbox_root = config.sandbox.work_dir
+        target = os.path.join(sandbox_root, rel_path) if rel_path else sandbox_root
+        entries = await _list_sandbox_entries(target, recursive)
+    else:
+        target = _resolve_local_path(rel_path)
+        if not target.exists():
+            raise HTTPException(status_code=404, detail="Path not found")
+        entries = _list_local_entries(target, recursive)
+
+    return {"path": rel_path or "", "files": entries}
+
+
+@router.get("/workspace/file", dependencies=[Depends(require_openai_auth)])
+async def get_workspace_file(path: str = Query(...)):
+    rel_path = _clean_rel_path(path)
+    if should_exclude_file(rel_path):
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    if config.sandbox and config.sandbox.use_sandbox:
+        sandbox_root = config.sandbox.work_dir
+        target = os.path.join(sandbox_root, rel_path)
+        stat = await _sandbox_stat(target)
+        if not stat.get("exists"):
+            raise HTTPException(status_code=404, detail="Path not found")
+        if stat.get("is_dir"):
+            raise HTTPException(status_code=400, detail="Path is a directory")
+        return await _sandbox_file_response(target, os.path.basename(rel_path), stat.get("size", 0))
+
+    local_path = _resolve_local_path(rel_path)
+    if not local_path.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    if local_path.is_dir():
+        raise HTTPException(status_code=400, detail="Path is a directory")
+    size = local_path.stat().st_size
+    if size > _MAX_DOWNLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File exceeds max download size ({_MAX_DOWNLOAD_BYTES} bytes)",
+        )
+    return FileResponse(local_path, filename=local_path.name)
 
 
 @router.post("/chat/completions", dependencies=[Depends(require_openai_auth)])

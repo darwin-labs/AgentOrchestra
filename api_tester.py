@@ -3,7 +3,7 @@ import json
 import os
 import threading
 import tkinter as tk
-from tkinter import messagebox, scrolledtext, simpledialog
+from tkinter import messagebox, scrolledtext, simpledialog, ttk
 
 import requests
 
@@ -93,15 +93,123 @@ class SettingsDialog(tk.Toplevel):
         self.destroy()
 
 
+class FileBrowser(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent.root)
+        self.parent = parent
+        self.title("Workspace Files")
+        self.geometry("520x500")
+        self.entries = []
+
+        top_frame = tk.Frame(self)
+        top_frame.pack(fill="x", padx=10, pady=10)
+
+        tk.Label(top_frame, text="Path:").pack(side="left")
+        self.path_var = tk.StringVar(value="")
+        self.path_entry = tk.Entry(top_frame, textvariable=self.path_var)
+        self.path_entry.pack(side="left", fill="x", expand=True, padx=(5, 5))
+
+        tk.Button(top_frame, text="Up", command=self.go_up).pack(side="left", padx=(0, 5))
+        tk.Button(top_frame, text="Refresh", command=self.refresh).pack(side="left")
+
+        list_frame = tk.Frame(self)
+        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        self.listbox = tk.Listbox(list_frame)
+        self.listbox.pack(side="left", fill="both", expand=True)
+        self.listbox.bind("<Double-1>", self.on_double_click)
+
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.listbox.config(yscrollcommand=scrollbar.set)
+
+        button_frame = tk.Frame(self)
+        button_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        tk.Button(button_frame, text="Download Selected", command=self.download_selected).pack(
+            side="left"
+        )
+        self.status_label = tk.Label(button_frame, text="")
+        self.status_label.pack(side="right")
+
+        self.refresh()
+
+    def set_status(self, text):
+        self.status_label.config(text=text)
+
+    def go_up(self):
+        current = self.path_var.get().strip().strip("/")
+        if not current:
+            return
+        parent = os.path.dirname(current)
+        self.path_var.set(parent)
+        self.refresh()
+
+    def refresh(self):
+        path = self.path_var.get().strip().strip("/")
+        try:
+            self.entries = self.parent.fetch_workspace_files(path)
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+            return
+        self.listbox.delete(0, tk.END)
+        for entry in self.entries:
+            self.listbox.insert(tk.END, self._display_label(entry, path))
+        self.set_status(f"{len(self.entries)} items")
+
+    def _display_label(self, entry, current_path):
+        rel_path = entry.get("path", "")
+        display = rel_path
+        if current_path:
+            prefix = current_path.rstrip("/") + "/"
+            if rel_path.startswith(prefix):
+                display = rel_path[len(prefix) :]
+        if entry.get("is_dir"):
+            display = f"{display}/"
+        return display or rel_path
+
+    def on_double_click(self, event):
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        entry = self.entries[selection[0]]
+        if entry.get("is_dir"):
+            self.path_var.set(entry.get("path", ""))
+            self.refresh()
+        else:
+            self.download_entry(entry)
+
+    def download_selected(self):
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+        entry = self.entries[selection[0]]
+        if entry.get("is_dir"):
+            self.path_var.set(entry.get("path", ""))
+            self.refresh()
+            return
+        self.download_entry(entry)
+
+    def download_entry(self, entry):
+        rel_path = entry.get("path", "")
+        try:
+            save_path = self.parent.download_workspace_file(rel_path)
+        except Exception as e:
+            messagebox.showerror("Download Failed", str(e))
+            return
+        messagebox.showinfo("Downloaded", f"Saved to {save_path}")
+
+
 class ChatApp:
     def __init__(self, root):
         self.root = root
         self.root.title("AgentOrchestra API Chat")
-        self.root.geometry("500x700")
+        self.root.geometry("980x700")
 
         self.config = self.load_config()
         self.messages = []
         self.images = []  # Keep references to prevent GC
+        self.response_count = 0
 
         # Menu
         menubar = tk.Menu(root)
@@ -110,6 +218,10 @@ class ChatApp:
         filemenu.add_separator()
         filemenu.add_command(label="Exit", command=root.quit)
         menubar.add_cascade(label="File", menu=filemenu)
+
+        filesmenu = tk.Menu(menubar, tearoff=0)
+        filesmenu.add_command(label="Browse Workspace", command=self.open_file_browser)
+        menubar.add_cascade(label="Files", menu=filesmenu)
         root.config(menu=menubar)
 
         # Header with Settings Button
@@ -125,27 +237,57 @@ class ChatApp:
         )
         self.settings_button.pack(side="right")
 
-        # Chat Area
+        # Main Content
+        content_pane = ttk.PanedWindow(root, orient="horizontal")
+        content_pane.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        left_frame = ttk.Frame(content_pane)
+        right_frame = ttk.Frame(content_pane)
+        content_pane.add(left_frame, weight=3)
+        content_pane.add(right_frame, weight=2)
+
+        # Chat Area (Conversation)
         self.chat_display = scrolledtext.ScrolledText(
-            root, state="disabled", wrap="word"
+            left_frame, state="disabled", wrap="word"
         )
-        self.chat_display.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.chat_display.tag_config("user", foreground="blue", justify="right")
-        self.chat_display.tag_config("assistant", foreground="green", justify="left")
-        self.chat_display.tag_config("system", foreground="gray", justify="center")
+        self.chat_display.pack(fill="both", expand=True)
+        self.chat_display.tag_config("user", foreground="#1a4a7a", justify="right")
+        self.chat_display.tag_config("assistant", foreground="#1f6b3a", justify="left")
+        self.chat_display.tag_config("assistant_label", foreground="#1f6b3a")
 
         # Input Area
-        input_frame = tk.Frame(root)
-        input_frame.pack(fill="x", padx=10, pady=10)
+        input_frame = tk.Frame(left_frame)
+        input_frame.pack(fill="x", padx=0, pady=10)
 
         self.input_text = tk.Text(input_frame, height=3)
         self.input_text.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.input_text.bind("<Return>", self.handle_return)
 
-        self.send_button = tk.Button(
-            input_frame, text="Send", command=self.send_message
-        )
+        self.send_button = tk.Button(input_frame, text="Send", command=self.send_message)
         self.send_button.pack(side="right")
+
+        # Right Panel: Steps & Final Response
+        notebook = ttk.Notebook(right_frame)
+        notebook.pack(fill="both", expand=True)
+
+        steps_frame = ttk.Frame(notebook)
+        final_frame = ttk.Frame(notebook)
+        notebook.add(steps_frame, text="Steps & Logs")
+        notebook.add(final_frame, text="Final Response")
+
+        self.steps_display = scrolledtext.ScrolledText(
+            steps_frame, state="disabled", wrap="word"
+        )
+        self.steps_display.pack(fill="both", expand=True)
+        self.steps_display.tag_config("step", foreground="#555555")
+        self.steps_display.tag_config("step_header", foreground="#333333", font=("Arial", 10, "bold"))
+
+        self.final_display = scrolledtext.ScrolledText(
+            final_frame, state="disabled", wrap="word"
+        )
+        self.final_display.pack(fill="both", expand=True)
+        self.final_display.tag_config("final_header", foreground="#333333", font=("Arial", 10, "bold"))
+        self.final_display.tag_config("assistant", foreground="#1f6b3a")
 
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
@@ -179,28 +321,74 @@ class ChatApp:
             self.send_message()
             return "break"  # prevent default behavior (newline)
 
+    def build_headers(self):
+        headers = {"Content-Type": "application/json"}
+        api_key = self.config.get("api_key")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        return headers
+
+    def _append_to(self, widget, text, tag=None):
+        widget.config(state="normal")
+        if tag:
+            widget.insert(tk.END, text, tag)
+        else:
+            widget.insert(tk.END, text)
+        widget.see(tk.END)
+        widget.config(state="disabled")
+
     def append_message(self, role, content):
-        self.chat_display.config(state="normal")
-        self.chat_display.insert(tk.END, f"{role.capitalize()}: {content}\n\n", role)
-        self.chat_display.see(tk.END)
-        self.chat_display.config(state="disabled")
-        if role != "system":
+        if role == "system":
+            self.append_step_message(content)
+            return
+        if role == "user":
+            self.append_chat_message("User", content, "user")
             self.messages.append({"role": role, "content": content})
+            return
+        if role == "assistant":
+            self.append_chat_message("Assistant", content, "assistant")
+            self.append_final_block(content)
+            self.messages.append({"role": role, "content": content})
+            return
+
+    def append_chat_message(self, label, content, tag):
+        self._append_to(self.chat_display, f"{label}: ", f"{tag}_label" if tag == "assistant" else tag)
+        self._append_to(self.chat_display, f"{content}\n\n", tag)
+
+    def append_step_message(self, content):
+        self._append_to(self.steps_display, "- ", "step")
+        self._append_to(self.steps_display, f"{content}\n", "step")
+
+    def append_final_block(self, content):
+        self.response_count += 1
+        self._append_to(self.final_display, f"Response {self.response_count}\n", "final_header")
+        self._append_to(self.final_display, f"{content}\n\n", "assistant")
 
     def update_last_message(self, content_chunk):
-        self.chat_display.config(state="normal")
-        self.chat_display.insert(tk.END, content_chunk, "assistant")
-        self.chat_display.see(tk.END)
-        self.chat_display.config(state="disabled")
+        self._append_to(self.chat_display, content_chunk, "assistant")
+        self._append_to(self.final_display, content_chunk, "assistant")
+
+    def start_assistant_response(self):
+        self.response_count += 1
+        self._append_to(self.chat_display, "Assistant: ", "assistant_label")
+        self._append_to(
+            self.final_display,
+            f"Response {self.response_count}\n",
+            "final_header",
+        )
+
+    def finish_assistant_response(self):
+        self._append_to(self.chat_display, "\n\n", "assistant")
+        self._append_to(self.final_display, "\n\n", "assistant")
 
     def display_browser_action(self, action_payload):
         action = action_payload.get("action") or "unknown"
         args = action_payload.get("args") or {}
         display_text = f"Browser action: {action} | args: {args}"
-        self.append_message("system", display_text)
+        self.append_step_message(display_text)
 
     def display_log(self, log_text):
-        self.append_message("system", log_text)
+        self.append_step_message(log_text)
 
     def _unique_download_path(self, filename):
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -225,22 +413,64 @@ class ChatApp:
                 f.write(file_bytes)
             size = payload.get("file_size") or len(file_bytes)
             mime = payload.get("mime_type") or "application/octet-stream"
-            self.append_message(
-                "system",
-                f"Received file '{file_name}' ({size} bytes, {mime}) saved to {save_path}",
+            self.append_step_message(
+                f"Received file '{file_name}' ({size} bytes, {mime}) saved to {save_path}"
             )
         except Exception as e:
-            self.append_message("system", f"Failed to save shared file: {str(e)}")
+            self.append_step_message(f"Failed to save shared file: {str(e)}")
+
+    def fetch_workspace_files(self, path=""):
+        base_url = self.config.get("base_url")
+        endpoint = f"{base_url}/workspace/files"
+        response = requests.get(
+            endpoint,
+            headers=self.build_headers(),
+            params={"path": path, "recursive": False},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Error {response.status_code}: {response.text}")
+        return response.json().get("files", [])
+
+    def download_workspace_file(self, rel_path):
+        base_url = self.config.get("base_url")
+        endpoint = f"{base_url}/workspace/file"
+        response = requests.get(
+            endpoint,
+            headers=self.build_headers(),
+            params={"path": rel_path},
+            stream=True,
+            timeout=60,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"Error {response.status_code}: {response.text}")
+
+        filename = None
+        content_disp = response.headers.get("Content-Disposition", "")
+        if "filename=" in content_disp:
+            filename = content_disp.split("filename=")[1].strip().strip("\"'")
+        if not filename:
+            filename = os.path.basename(rel_path) or "downloaded_file"
+
+        save_path = self._unique_download_path(filename)
+        with open(save_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        return save_path
+
+    def open_file_browser(self):
+        FileBrowser(self)
 
     def display_image(self, base64_str):
         try:
             image_data = base64.b64decode(base64_str)
             img = tk.PhotoImage(data=image_data)
-            self.chat_display.config(state="normal")
-            self.chat_display.image_create(tk.END, image=img)
-            self.chat_display.insert(tk.END, "\n", "assistant")
-            self.chat_display.see(tk.END)
-            self.chat_display.config(state="disabled")
+            self.steps_display.config(state="normal")
+            self.steps_display.image_create(tk.END, image=img)
+            self.steps_display.insert(tk.END, "\n", "step")
+            self.steps_display.see(tk.END)
+            self.steps_display.config(state="disabled")
             self.images.append(img)
         except Exception as e:
             print(f"Image error: {e}")
@@ -267,9 +497,7 @@ class ChatApp:
             daytona_key = self.config.get("daytona_api_key")
 
             endpoint = f"{base_url}/chat/completions"
-            headers = {"Content-Type": "application/json"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            headers = self.build_headers()
 
             payload = {
                 "model": model,
@@ -288,7 +516,7 @@ class ChatApp:
 
             if response.status_code == 200:
                 # Prepare UI for streaming assistant response
-                self.root.after(0, lambda: self.append_message("assistant", ""))
+                self.root.after(0, self.start_assistant_response)
 
                 full_content = ""
                 for line in response.iter_lines():
@@ -377,6 +605,7 @@ class ChatApp:
                                 pass
 
                 # Update memory with full response
+                self.root.after(0, self.finish_assistant_response)
                 self.messages.append({"role": "assistant", "content": full_content})
 
             else:
